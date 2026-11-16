@@ -1,0 +1,20 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #172a35; background: #f3f7f6; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 860px; padding: 2rem 1rem; margin: auto; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 2rem; }
+h1, h2, h3 { margin: 0 0 .6rem; }
+p { line-height: 1.5; }
+.eyebrow { color: #28655c; margin: 0 0 .3rem; }
+.card { background: white; border: 1px solid #d5e4e0; border-radius: .8rem; padding: 1.25rem; margin-bottom: 1rem; }
+.trip-form { display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: .75rem; align-items: end; }
+label { display: grid; gap: .35rem; font-weight: 600; }
+input, button { font: inherit; border-radius: .4rem; padding: .65rem; }
+input { width: 100%; border: 1px solid #8da49e; }
+button { cursor: pointer; border: 1px solid #135e50; background: #135e50; color: white; }
+.secondary { color: #135e50; background: white; }
+.trip { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.trip p { margin: 0; }
+.notice { padding: .75rem; border-radius: .4rem; background: #def2e9; }
+.notice.error { background: #fce4e4; }
+@media (max-width: 650px) { .trip-form { grid-template-columns: 1fr; } }
