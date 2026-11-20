@@ -7,6 +7,15 @@ The custom profiles in `.github/agents/` are repository-owned adaptations
 written for this project. They can be selected in supported Copilot
 environments, subject to your account and repository settings.
 
+For product discovery, select **Product owner** in a supported custom-agent
+picker, or use `/agent` in Copilot CLI. Ask it to prioritize opportunities or
+refine selected items into feature-issue requirements. Its `web` tool alias
+permits online research where the runtime provides web tools; availability
+varies, and the alias is not supported by Copilot cloud agent. If search is
+unavailable, it can use accessible supplied links when fetching is available
+and will report unverified research. See the
+[custom agent tools reference](https://docs.github.com/en/copilot/reference/custom-agents-configuration#tools).
+
 1. The owner writes a GitHub issue. `ready-for-agent` is the intended explicit
    opt-in, but currently does not trigger anything.
 2. A requirements specialist clarifies material ambiguities and documents
