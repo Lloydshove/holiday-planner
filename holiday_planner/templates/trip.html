@@ -16,19 +16,19 @@
 
   <section class="card" aria-labelledby="edit-trip-heading">
     <h2 id="edit-trip-heading">Edit trip</h2>
-    <form method="post" action="{{ url_for('edit_trip', trip_id=trip.id) }}" class="trip-form">
+    <form method="post" action="{{ url_for('edit_trip', trip_id=trip.id) }}" class="trip-form" data-trip-date-form>
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="field field-destination">
         <label for="edit-destination">Destination</label>
-        <input id="edit-destination" name="destination" maxlength="120" value="{{ trip.destination }}" required>
+        <input id="edit-destination" name="destination" maxlength="120" value="{{ edit_form.destination }}" required>
       </div>
       <div class="field">
         <label for="edit-start-date">Start date</label>
-        <input id="edit-start-date" type="date" name="start_date" value="{{ trip.start_date }}" required>
+        <input id="edit-start-date" type="date" name="start_date" value="{{ edit_form.start_date }}" required>
       </div>
       <div class="field">
         <label for="edit-end-date">End date</label>
-        <input id="edit-end-date" type="date" name="end_date" value="{{ trip.end_date }}" required>
+        <input id="edit-end-date" type="date" name="end_date" value="{{ edit_form.end_date }}"{% if end_date_min %} min="{{ end_date_min }}"{% endif %} required>
       </div>
       <button type="submit" class="form-submit">Save changes</button>
     </form>

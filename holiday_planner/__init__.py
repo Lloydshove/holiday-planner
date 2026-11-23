@@ -95,23 +95,30 @@ def create_app(test_config=None):
 
         return wrapped
 
+    def parse_iso_date(value):
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed if parsed.isoformat() == value else None
+
     def validate_trip_form(form):
         destination = form.get("destination", "").strip()
         start = form.get("start_date", "")
         end = form.get("end_date", "")
-        try:
-            start_date = date.fromisoformat(start)
-            end_date = date.fromisoformat(end)
-            valid_dates = (
-                start_date.isoformat() == start
-                and end_date.isoformat() == end
-                and end_date >= start_date
-            )
-        except ValueError:
-            valid_dates = False
+        start_date = parse_iso_date(start)
+        end_date = parse_iso_date(end)
+        valid_dates = bool(start_date and end_date and end_date >= start_date)
         if not destination or len(destination) > 120 or not valid_dates:
             return None
         return destination, start, end
+
+    def form_values_from_request(form):
+        return {
+            "destination": form.get("destination", ""),
+            "start_date": form.get("start_date", ""),
+            "end_date": form.get("end_date", ""),
+        }
 
     def get_owned_trip(trip_id):
         trip = database().execute(
@@ -127,6 +134,7 @@ def create_app(test_config=None):
     def index():
         trips = []
         confirm_delete = None
+        add_form = {"destination": "", "start_date": "", "end_date": ""}
         if "user_id" in session:
             trips = database().execute(
                 "SELECT id, destination, start_date, end_date FROM trips "
@@ -134,7 +142,21 @@ def create_app(test_config=None):
                 (session["user_id"],),
             ).fetchall()
             confirm_delete = request.args.get("confirm_delete", type=int)
-        return render_template("index.html", trips=trips, confirm_delete=confirm_delete)
+            saved_form = session.pop("add_trip_form", None)
+            if isinstance(saved_form, dict):
+                add_form = {
+                    "destination": str(saved_form.get("destination", "")),
+                    "start_date": str(saved_form.get("start_date", "")),
+                    "end_date": str(saved_form.get("end_date", "")),
+                }
+        end_date_min = add_form["start_date"] if parse_iso_date(add_form["start_date"]) else ""
+        return render_template(
+            "index.html",
+            trips=trips,
+            confirm_delete=confirm_delete,
+            add_form=add_form,
+            end_date_min=end_date_min,
+        )
 
     @app.post("/auth/login")
     def login():
@@ -167,8 +189,10 @@ def create_app(test_config=None):
     def add_trip():
         validated = validate_trip_form(request.form)
         if validated is None:
+            session["add_trip_form"] = form_values_from_request(request.form)
             flash("Enter a destination and valid dates, with the end date on or after the start date.", "error")
             return redirect(url_for("index"))
+        session.pop("add_trip_form", None)
         destination, start, end = validated
         database().execute(
             "INSERT INTO trips (owner_id, destination, start_date, end_date) VALUES (?, ?, ?, ?)",
@@ -183,7 +207,26 @@ def create_app(test_config=None):
     def trip_detail(trip_id):
         trip = get_owned_trip(trip_id)
         confirm_delete = request.args.get("confirm_delete") == "1"
-        return render_template("trip.html", trip=trip, confirm_delete=confirm_delete)
+        edit_form = {
+            "destination": trip["destination"],
+            "start_date": trip["start_date"],
+            "end_date": trip["end_date"],
+        }
+        saved_form = session.pop(f"edit_trip_form_{trip_id}", None)
+        if isinstance(saved_form, dict):
+            edit_form = {
+                "destination": str(saved_form.get("destination", "")),
+                "start_date": str(saved_form.get("start_date", "")),
+                "end_date": str(saved_form.get("end_date", "")),
+            }
+        end_date_min = edit_form["start_date"] if parse_iso_date(edit_form["start_date"]) else ""
+        return render_template(
+            "trip.html",
+            trip=trip,
+            confirm_delete=confirm_delete,
+            edit_form=edit_form,
+            end_date_min=end_date_min,
+        )
 
     @app.post("/trips/<int:trip_id>/edit")
     @login_required
@@ -191,8 +234,10 @@ def create_app(test_config=None):
         get_owned_trip(trip_id)
         validated = validate_trip_form(request.form)
         if validated is None:
+            session[f"edit_trip_form_{trip_id}"] = form_values_from_request(request.form)
             flash("Enter a destination and valid dates, with the end date on or after the start date.", "error")
             return redirect(url_for("trip_detail", trip_id=trip_id))
+        session.pop(f"edit_trip_form_{trip_id}", None)
         destination, start, end = validated
         database().execute(
             "UPDATE trips SET destination = ?, start_date = ?, end_date = ? "

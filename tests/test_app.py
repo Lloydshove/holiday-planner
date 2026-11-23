@@ -182,6 +182,76 @@ def test_invalid_trips_are_rejected(client, destination, start, end):
     assert b"No trips yet" in response.data
 
 
+def test_invalid_add_trip_preserves_entered_values_once(client):
+    sign_in(client, 1)
+    response = client.post("/trips", data={
+        "destination": "Reykjavik",
+        "start_date": "2027-08-10",
+        "end_date": "2027-08-05",
+    }, follow_redirects=True)
+    assert b"Enter a destination and valid dates" in response.data
+    assert b'value="Reykjavik"' in response.data
+    assert b'value="2027-08-10"' in response.data
+    assert b'value="2027-08-05"' in response.data
+    assert b'min="2027-08-10"' in response.data
+
+    # Subsequent GET starts fresh without stale failed form data
+    fresh = client.get("/")
+    assert b'value="Reykjavik"' not in fresh.data
+
+
+def test_invalid_add_trip_escapes_preserved_destination(client):
+    sign_in(client, 1)
+    response = client.post("/trips", data={
+        "destination": '"><script>alert(1)</script>',
+        "start_date": "2027-08-10",
+        "end_date": "2027-08-05",
+    }, follow_redirects=True)
+    assert b"<script>" not in response.data
+    assert b"&lt;script&gt;" in response.data
+
+
+def test_invalid_edit_trip_preserves_entered_values_once(app, client):
+    sign_in(client, 1)
+    client.post("/trips", data={
+        "destination": "Kyoto", "start_date": "2027-04-01", "end_date": "2027-04-10"
+    })
+    response = client.post("/trips/1/edit", data={
+        "destination": "Sapporo",
+        "start_date": "2027-04-15",
+        "end_date": "2027-04-10",
+    }, follow_redirects=True)
+    assert b"Enter a destination and valid dates" in response.data
+    assert b'value="Sapporo"' in response.data
+    assert b'value="2027-04-15"' in response.data
+    assert b'value="2027-04-10"' in response.data
+    assert b'min="2027-04-15"' in response.data
+
+    # Stored trip remains unchanged and next GET shows stored values
+    fresh = client.get("/trips/1")
+    assert b'value="Kyoto"' in fresh.data
+    assert b'value="2027-04-01"' in fresh.data
+    assert b'min="2027-04-01"' in fresh.data
+
+
+def test_date_chooser_constraints_and_script_are_rendered(client):
+    sign_in(client, 1)
+    index_page = client.get("/")
+    assert b"/static/trip-dates.js" in index_page.data
+    assert b"data-trip-date-form" in index_page.data
+
+    client.post("/trips", data={
+        "destination": "Kyoto", "start_date": "2027-04-01", "end_date": "2027-04-10"
+    })
+    trip_page = client.get("/trips/1")
+    assert b"/static/trip-dates.js" in trip_page.data
+    assert b'name="end_date" value="2027-04-10" min="2027-04-01"' in trip_page.data
+
+    js_res = client.get("/static/trip-dates.js")
+    assert js_res.status_code == 200
+    assert b"endInput.min = startValue" in js_res.data
+
+
 def test_login_is_required(client):
     assert client.post("/trips").status_code == 302
     assert client.get("/trips/1").status_code == 302

@@ -12,19 +12,19 @@
   {% else %}
   <section class="card" aria-labelledby="add-trip-heading">
     <h2 id="add-trip-heading">Add a trip</h2>
-    <form method="post" action="{{ url_for('add_trip') }}" class="trip-form">
+    <form method="post" action="{{ url_for('add_trip') }}" class="trip-form" data-trip-date-form>
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="field field-destination">
         <label for="add-destination">Destination</label>
-        <input id="add-destination" name="destination" maxlength="120" required>
+        <input id="add-destination" name="destination" maxlength="120" value="{{ add_form.destination }}" required>
       </div>
       <div class="field">
         <label for="add-start-date">Start date</label>
-        <input id="add-start-date" type="date" name="start_date" required>
+        <input id="add-start-date" type="date" name="start_date" value="{{ add_form.start_date }}" required>
       </div>
       <div class="field">
         <label for="add-end-date">End date</label>
-        <input id="add-end-date" type="date" name="end_date" required>
+        <input id="add-end-date" type="date" name="end_date" value="{{ add_form.end_date }}"{% if end_date_min %} min="{{ end_date_min }}"{% endif %} required>
       </div>
       <button type="submit" class="form-submit">Add trip</button>
     </form>
