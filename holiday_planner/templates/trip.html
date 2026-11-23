@@ -40,6 +40,10 @@
         <label for="idea-url">Link (optional)</label>
         <input id="idea-url" type="url" name="url" maxlength="500" placeholder="https://example.com">
       </div>
+      <div class="field field-idea-maps-url">
+        <label for="idea-maps-url">Google Maps link (optional)</label>
+        <input id="idea-maps-url" type="url" name="maps_url" maxlength="500" placeholder="https://maps.google.com/...">
+      </div>
       <div class="field field-idea-notes">
         <label for="idea-notes">Notes (optional)</label>
         <textarea id="idea-notes" name="notes" maxlength="2000" rows="2" placeholder="Neighborhood, timing, or why to check it out"></textarea>
@@ -131,6 +135,10 @@
             <label for="edit-idea-url-{{ idea.id }}">Link (optional)</label>
             <input id="edit-idea-url-{{ idea.id }}" type="url" name="url" maxlength="500" value="{{ idea.url }}" placeholder="https://example.com">
           </div>
+          <div class="field field-idea-maps-url">
+            <label for="edit-idea-maps-url-{{ idea.id }}">Google Maps link (optional)</label>
+            <input id="edit-idea-maps-url-{{ idea.id }}" type="url" name="maps_url" maxlength="500" value="{{ idea.maps_url }}" placeholder="https://maps.google.com/...">
+          </div>
           <div class="field field-idea-notes">
             <label for="edit-idea-notes-{{ idea.id }}">Notes (optional)</label>
             <textarea id="edit-idea-notes-{{ idea.id }}" name="notes" maxlength="2000" rows="3">{{ idea.notes }}</textarea>
@@ -144,6 +152,11 @@
         {% if idea.url and is_safe_http_url(idea.url) %}
         <p class="idea-link-row">
           <a class="idea-link" href="{{ idea.url }}" target="_blank" rel="noopener noreferrer">{{ idea.url }}</a>
+        </p>
+        {% endif %}
+        {% if idea.maps_url and is_safe_http_url(idea.maps_url) %}
+        <p class="idea-maps-link-row">
+          <a class="idea-maps-link" href="{{ idea.maps_url }}" target="_blank" rel="noopener noreferrer" aria-label="Open {{ idea.title }} in Google Maps">Open in Google Maps</a>
         </p>
         {% endif %}
         {% if idea.notes %}

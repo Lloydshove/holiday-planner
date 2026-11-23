@@ -25,14 +25,20 @@ IDEA_STATUS_LABELS = {
 MAX_IDEA_TITLE_LEN = 160
 MAX_IDEA_CATEGORY_LEN = 40
 MAX_IDEA_URL_LEN = 500
+MAX_IDEA_MAPS_URL_LEN = 500
 MAX_IDEA_NOTES_LEN = 2000
 
 
 def is_safe_http_url(value):
     if not value or any(ch.isspace() or ord(ch) < 32 for ch in value):
         return False
-    parsed = urlsplit(value)
-    return parsed.scheme.lower() in ("http", "https") and bool(parsed.hostname)
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        return False
+    return parsed.scheme.lower() in ("http", "https") and bool(hostname)
 
 
 def create_app(test_config=None):
@@ -111,11 +117,20 @@ def create_app(test_config=None):
                 title TEXT NOT NULL,
                 category TEXT NOT NULL,
                 url TEXT NOT NULL DEFAULT '',
+                maps_url TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'idea',
                 created_at TEXT NOT NULL
             )"""
         )
+        idea_columns = {
+            row["name"]
+            for row in database().execute("PRAGMA table_info(ideas)").fetchall()
+        }
+        if "maps_url" not in idea_columns:
+            database().execute(
+                "ALTER TABLE ideas ADD COLUMN maps_url TEXT NOT NULL DEFAULT ''"
+            )
         database().execute(
             "CREATE INDEX IF NOT EXISTS idx_ideas_trip_owner ON ideas (trip_id, owner_id, id)"
         )
@@ -170,7 +185,7 @@ def create_app(test_config=None):
     def get_owned_idea(trip_id, idea_id):
         get_owned_trip(trip_id)
         idea = database().execute(
-            "SELECT id, trip_id, owner_id, title, category, url, notes, status, created_at "
+            "SELECT id, trip_id, owner_id, title, category, url, maps_url, notes, status, created_at "
             "FROM ideas WHERE id = ? AND trip_id = ? AND owner_id = ?",
             (idea_id, trip_id, session["user_id"]),
         ).fetchone()
@@ -236,11 +251,18 @@ def create_app(test_config=None):
             if not is_safe_http_url(url):
                 return None, "URL must start with http:// or https://."
 
+        maps_url = form.get("maps_url", "").strip()
+        if maps_url:
+            if len(maps_url) > MAX_IDEA_MAPS_URL_LEN:
+                return None, "Google Maps link must be 500 characters or fewer."
+            if not is_safe_http_url(maps_url):
+                return None, "Google Maps link must start with http:// or https://."
+
         notes = form.get("notes", "").replace("\r\n", "\n").strip()
         if len(notes) > MAX_IDEA_NOTES_LEN:
             return None, "Notes must be 2000 characters or fewer."
 
-        return (title, category, url, notes), None
+        return (title, category, url, maps_url, notes), None
 
     @app.get("/")
     def index():
@@ -344,7 +366,7 @@ def create_app(test_config=None):
             params.append(category_filter)
 
         ideas = database().execute(
-            f"SELECT id, title, category, url, notes, status, created_at FROM ideas "
+            f"SELECT id, title, category, url, maps_url, notes, status, created_at FROM ideas "
             f"WHERE {' AND '.join(clauses)} ORDER BY id DESC",
             params,
         ).fetchall()
@@ -393,12 +415,12 @@ def create_app(test_config=None):
         if error is not None:
             flash(error, "error")
             return redirect(url_for("trip_detail", trip_id=trip_id))
-        title, category, url, notes = validated
+        title, category, url, maps_url, notes = validated
         created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         database().execute(
-            "INSERT INTO ideas (trip_id, owner_id, title, category, url, notes, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, 'idea', ?)",
-            (trip_id, session["user_id"], title, category, url, notes, created_at),
+            "INSERT INTO ideas (trip_id, owner_id, title, category, url, maps_url, notes, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'idea', ?)",
+            (trip_id, session["user_id"], title, category, url, maps_url, notes, created_at),
         )
         database().commit()
         flash("Idea added.", "success")
@@ -461,11 +483,11 @@ def create_app(test_config=None):
         else:
             new_status = idea["status"]
 
-        title, category, url, notes = validated
+        title, category, url, maps_url, notes = validated
         database().execute(
-            "UPDATE ideas SET title = ?, category = ?, url = ?, notes = ?, status = ? "
+            "UPDATE ideas SET title = ?, category = ?, url = ?, maps_url = ?, notes = ?, status = ? "
             "WHERE id = ? AND trip_id = ? AND owner_id = ?",
-            (title, category, url, notes, new_status, idea_id, trip_id, session["user_id"]),
+            (title, category, url, maps_url, notes, new_status, idea_id, trip_id, session["user_id"]),
         )
         database().commit()
         flash("Idea updated.", "success")

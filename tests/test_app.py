@@ -172,8 +172,9 @@ def test_idea_quick_capture_starter_and_custom_categories_and_escaping(app, clie
     page = client.get("/trips/1")
     assert page.status_code == 200
     assert b'action="/trips/1/ideas"' in page.data
-    for field_id in (b'for="idea-title"', b'for="idea-category-preset"', b'for="idea-category-custom"', b'for="idea-url"', b'for="idea-notes"'):
+    for field_id in (b'for="idea-title"', b'for="idea-category-preset"', b'for="idea-category-custom"', b'for="idea-url"', b'for="idea-maps-url"', b'for="idea-notes"'):
         assert field_id in page.data
+    assert b"Google Maps link (optional)" in page.data
     for starter in (b"Sight", b"Food", b"Stay", b"Transport", b"Activity", b"Note"):
         assert starter in page.data
 
@@ -181,6 +182,7 @@ def test_idea_quick_capture_starter_and_custom_categories_and_escaping(app, clie
         "title": "  Omoide Yokocho  ",
         "category_preset": "Food",
         "url": "https://example.com/ramen",
+        "maps_url": "  https://maps.google.com/?q=Omoide+Yokocho  ",
         "notes": "  Go before 7pm  ",
     }, follow_redirects=True)
     assert res.status_code == 200
@@ -188,6 +190,9 @@ def test_idea_quick_capture_starter_and_custom_categories_and_escaping(app, clie
     assert b'role="status"' in res.data
     assert b"Omoide Yokocho" in res.data
     assert b'href="https://example.com/ramen"' in res.data
+    assert b'href="https://maps.google.com/?q=Omoide+Yokocho"' in res.data
+    assert b'aria-label="Open Omoide Yokocho in Google Maps"' in res.data
+    assert b">Open in Google Maps</a>" in res.data
     assert b'rel="noopener noreferrer"' in res.data
     assert b"Go before 7pm" in res.data
 
@@ -216,12 +221,21 @@ def test_idea_quick_capture_starter_and_custom_categories_and_escaping(app, clie
 
     with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
         rows = db.execute(
-            "SELECT trip_id, owner_id, title, category, url, notes, status, created_at "
+            "SELECT trip_id, owner_id, title, category, url, maps_url, notes, status, created_at "
             "FROM ideas ORDER BY id"
         ).fetchall()
     assert len(rows) == 5
-    assert rows[0][:7] == (1, 1, "Omoide Yokocho", "Food", "https://example.com/ramen", "Go before 7pm", "idea")
-    assert rows[0][7]
+    assert rows[0][:8] == (
+        1,
+        1,
+        "Omoide Yokocho",
+        "Food",
+        "https://example.com/ramen",
+        "https://maps.google.com/?q=Omoide+Yokocho",
+        "Go before 7pm",
+        "idea",
+    )
+    assert rows[0][8]
     assert rows[1][3] == "Street Food"
     assert rows[2][3] == "Street Food"
     assert rows[3][3] == "Sight"
@@ -239,8 +253,17 @@ def test_idea_quick_capture_starter_and_custom_categories_and_escaping(app, clie
     {"title": "Valid", "category": "Sight", "url": "data:text/html,<script>alert(1)</script>"},
     {"title": "Valid", "category": "Sight", "url": "ftp://example.com/map"},
     {"title": "Valid", "category": "Sight", "url": "https://"},
+    {"title": "Valid", "category": "Sight", "url": "https://[invalid"},
     {"title": "Valid", "category": "Sight", "url": "https://example.com/\nnewline"},
     {"title": "Valid", "category": "Sight", "url": "https://example.com/" + "a" * 490},
+    {"title": "Valid", "category": "Sight", "maps_url": "javascript:alert(1)"},
+    {"title": "Valid", "category": "Sight", "maps_url": "data:text/html,<script>alert(1)</script>"},
+    {"title": "Valid", "category": "Sight", "maps_url": "ftp://maps.google.com/place"},
+    {"title": "Valid", "category": "Sight", "maps_url": "https://"},
+    {"title": "Valid", "category": "Sight", "maps_url": "https://[invalid"},
+    {"title": "Valid", "category": "Sight", "maps_url": "maps.google.com/?q=tokyo"},
+    {"title": "Valid", "category": "Sight", "maps_url": "https://maps.google.com/\nnewline"},
+    {"title": "Valid", "category": "Sight", "maps_url": "https://maps.google.com/" + "a" * 480},
     {"title": "Valid", "category": "Sight", "notes": "n" * 2001},
 ])
 def test_invalid_ideas_are_rejected_without_saving(app, client, payload):
@@ -263,13 +286,14 @@ def test_ideas_enforce_cross_user_isolation_and_safe_link_rendering(app, client)
     # Defense in depth: even a tampered non-http(s) DB URL is never rendered as an anchor
     with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
         db.execute(
-            "INSERT INTO ideas (trip_id, owner_id, title, category, url, notes, status, created_at) "
-            "VALUES (1, 1, 'Tampered', 'Note', 'javascript:alert(1)', '', 'idea', '2027-01-01T00:00:00Z')"
+            "INSERT INTO ideas (trip_id, owner_id, title, category, url, maps_url, notes, status, created_at) "
+            "VALUES (1, 1, 'Tampered', 'Note', 'javascript:alert(1)', 'javascript:alert(2)', '', 'idea', '2027-01-01T00:00:00Z')"
         )
         db.commit()
     page = client.get("/trips/1")
     assert b"Tampered" in page.data
     assert b'href="javascript:' not in page.data
+    assert b"Open in Google Maps" not in page.data
 
     sign_in(client, 2)
     assert client.post("/trips/1/ideas", data={
@@ -690,3 +714,106 @@ def test_idea_actions_enforce_cross_user_and_cross_trip_404_isolation(app, clien
 
     with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
         assert db.execute("SELECT title, status FROM ideas WHERE id = 1").fetchone() == ("Alfama", "idea")
+
+
+def test_idea_maps_url_edit_clearing_and_legacy_db_migration(tmp_path):
+    db_path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """CREATE TABLE trips (
+                id INTEGER PRIMARY KEY,
+                owner_id INTEGER NOT NULL,
+                destination TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE ideas (
+                id INTEGER PRIMARY KEY,
+                trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+                owner_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                category TEXT NOT NULL,
+                url TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'idea',
+                created_at TEXT NOT NULL
+            )"""
+        )
+        db.execute(
+            "INSERT INTO trips (id, owner_id, destination, start_date, end_date) "
+            "VALUES (1, 1, 'Berlin', '2027-05-01', '2027-05-05')"
+        )
+        db.execute(
+            "INSERT INTO ideas (id, trip_id, owner_id, title, category, url, notes, status, created_at) "
+            "VALUES (1, 1, 1, 'Brandenburg Gate', 'Sight', '', '', 'idea', '2027-01-01T00:00:00Z')"
+        )
+        db.commit()
+
+    migrated_app = create_app({
+        "TESTING": True,
+        "SECRET_KEY": "test-key",
+        "GITHUB_CLIENT_ID": "test-id",
+        "GITHUB_CLIENT_SECRET": "test-secret",
+        "OAUTH_REDIRECT_URI": "http://127.0.0.1:5000/auth/callback",
+        "SESSION_COOKIE_SECURE": False,
+        "WTF_CSRF_ENABLED": False,
+        "DATABASE_PATH": str(db_path),
+    })
+
+    with sqlite3.connect(db_path) as db:
+        columns = {row[1] for row in db.execute("PRAGMA table_info(ideas)").fetchall()}
+        assert "maps_url" in columns
+        assert db.execute("SELECT maps_url FROM ideas WHERE id = 1").fetchone() == ("",)
+
+    migrated_client = migrated_app.test_client()
+    sign_in(migrated_client, 1)
+
+    # Pre-existing idea shows edit field without Maps link on card yet
+    edit_page = migrated_client.get("/trips/1?edit_idea=1")
+    assert edit_page.status_code == 200
+    assert b'for="edit-idea-maps-url-1"' in edit_page.data
+    assert b"Open in Google Maps" not in edit_page.data
+
+    # Editing adds maps_url and renders link safely
+    updated = migrated_client.post("/trips/1/ideas/1/edit", data={
+        "title": "Brandenburg Gate",
+        "category_preset": "Sight",
+        "status": "shortlisted",
+        "maps_url": "https://maps.app.goo.gl/example123",
+    }, follow_redirects=True)
+    assert updated.status_code == 200
+    assert b'href="https://maps.app.goo.gl/example123"' in updated.data
+    assert b'aria-label="Open Brandenburg Gate in Google Maps"' in updated.data
+    assert b'target="_blank" rel="noopener noreferrer"' in updated.data
+
+    # Edit form pre-populates existing maps_url
+    edit_populated = migrated_client.get("/trips/1?edit_idea=1")
+    assert b'value="https://maps.app.goo.gl/example123"' in edit_populated.data
+
+    # Invalid maps_url during edit rejects without overwriting stored maps_url
+    for bad_maps_url in ("javascript:alert(1)", "data:text/plain,hi", "https://maps.google.com/" + "x" * 480):
+        bad_res = migrated_client.post("/trips/1/ideas/1/edit", data={
+            "title": "Brandenburg Gate",
+            "category_preset": "Sight",
+            "status": "shortlisted",
+            "maps_url": bad_maps_url,
+        }, follow_redirects=True)
+        assert b'role="alert"' in bad_res.data
+        with sqlite3.connect(db_path) as db:
+            assert db.execute("SELECT maps_url FROM ideas WHERE id = 1").fetchone() == (
+                "https://maps.app.goo.gl/example123",
+            )
+
+    # Clearing maps_url removes the rendered link
+    cleared = migrated_client.post("/trips/1/ideas/1/edit", data={
+        "title": "Brandenburg Gate",
+        "category_preset": "Sight",
+        "status": "shortlisted",
+        "maps_url": "",
+    }, follow_redirects=True)
+    assert cleared.status_code == 200
+    assert b"Open in Google Maps" not in cleared.data
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT maps_url FROM ideas WHERE id = 1").fetchone() == ("",)
