@@ -65,6 +65,7 @@ def create_app(test_config=None):
         if "db" not in g:
             g.db = sqlite3.connect(app.config["DATABASE_PATH"])
             g.db.row_factory = sqlite3.Row
+            g.db.execute("PRAGMA foreign_keys = ON")
         return g.db
 
     @app.teardown_appcontext
@@ -94,16 +95,46 @@ def create_app(test_config=None):
 
         return wrapped
 
+    def validate_trip_form(form):
+        destination = form.get("destination", "").strip()
+        start = form.get("start_date", "")
+        end = form.get("end_date", "")
+        try:
+            start_date = date.fromisoformat(start)
+            end_date = date.fromisoformat(end)
+            valid_dates = (
+                start_date.isoformat() == start
+                and end_date.isoformat() == end
+                and end_date >= start_date
+            )
+        except ValueError:
+            valid_dates = False
+        if not destination or len(destination) > 120 or not valid_dates:
+            return None
+        return destination, start, end
+
+    def get_owned_trip(trip_id):
+        trip = database().execute(
+            "SELECT id, destination, start_date, end_date FROM trips "
+            "WHERE id = ? AND owner_id = ?",
+            (trip_id, session["user_id"]),
+        ).fetchone()
+        if trip is None:
+            abort(404)
+        return trip
+
     @app.get("/")
     def index():
         trips = []
+        confirm_delete = None
         if "user_id" in session:
             trips = database().execute(
                 "SELECT id, destination, start_date, end_date FROM trips "
                 "WHERE owner_id = ? ORDER BY start_date, id",
                 (session["user_id"],),
             ).fetchall()
-        return render_template("index.html", trips=trips)
+            confirm_delete = request.args.get("confirm_delete", type=int)
+        return render_template("index.html", trips=trips, confirm_delete=confirm_delete)
 
     @app.post("/auth/login")
     def login():
@@ -134,18 +165,11 @@ def create_app(test_config=None):
     @app.post("/trips")
     @login_required
     def add_trip():
-        destination = request.form.get("destination", "").strip()
-        start = request.form.get("start_date", "")
-        end = request.form.get("end_date", "")
-        try:
-            start_date = date.fromisoformat(start)
-            end_date = date.fromisoformat(end)
-            valid_dates = start_date.isoformat() == start and end_date.isoformat() == end and end_date >= start_date
-        except ValueError:
-            valid_dates = False
-        if not destination or len(destination) > 120 or not valid_dates:
+        validated = validate_trip_form(request.form)
+        if validated is None:
             flash("Enter a destination and valid dates, with the end date on or after the start date.", "error")
             return redirect(url_for("index"))
+        destination, start, end = validated
         database().execute(
             "INSERT INTO trips (owner_id, destination, start_date, end_date) VALUES (?, ?, ?, ?)",
             (session["user_id"], destination, start, end),
@@ -154,9 +178,46 @@ def create_app(test_config=None):
         flash("Trip added.", "success")
         return redirect(url_for("index"))
 
+    @app.get("/trips/<int:trip_id>")
+    @login_required
+    def trip_detail(trip_id):
+        trip = get_owned_trip(trip_id)
+        confirm_delete = request.args.get("confirm_delete") == "1"
+        return render_template("trip.html", trip=trip, confirm_delete=confirm_delete)
+
+    @app.post("/trips/<int:trip_id>/edit")
+    @login_required
+    def edit_trip(trip_id):
+        get_owned_trip(trip_id)
+        validated = validate_trip_form(request.form)
+        if validated is None:
+            flash("Enter a destination and valid dates, with the end date on or after the start date.", "error")
+            return redirect(url_for("trip_detail", trip_id=trip_id))
+        destination, start, end = validated
+        database().execute(
+            "UPDATE trips SET destination = ?, start_date = ?, end_date = ? "
+            "WHERE id = ? AND owner_id = ?",
+            (destination, start, end, trip_id, session["user_id"]),
+        )
+        database().commit()
+        flash("Trip updated.", "success")
+        return redirect(url_for("trip_detail", trip_id=trip_id))
+
+    @app.get("/trips/<int:trip_id>/delete")
+    @login_required
+    def confirm_delete_trip(trip_id):
+        get_owned_trip(trip_id)
+        return redirect(url_for("trip_detail", trip_id=trip_id, confirm_delete=1) + "#delete-trip")
+
     @app.post("/trips/<int:trip_id>/delete")
     @login_required
     def delete_trip(trip_id):
+        get_owned_trip(trip_id)
+        if request.form.get("confirm") != "1":
+            flash("Confirm deletion before removing this trip.", "error")
+            if request.form.get("origin") == "index":
+                return redirect(url_for("index", confirm_delete=trip_id) + f"#trip-{trip_id}")
+            return redirect(url_for("trip_detail", trip_id=trip_id, confirm_delete=1) + "#delete-trip")
         result = database().execute(
             "DELETE FROM trips WHERE id = ? AND owner_id = ?", (trip_id, session["user_id"])
         )

@@ -1,63 +1,65 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Holiday planner</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-  <main>
-    <header>
-      <div>
-        <p class="eyebrow">Plan your next adventure</p>
-        <h1>Holiday planner</h1>
+{% extends "base.html" %}
+{% block content %}
+  {% if not session.get("user_id") %}
+  <section class="card">
+    <h2>Your trips, in one place</h2>
+    <p>Save destinations and dates for your upcoming holidays.</p>
+    <form method="post" action="{{ url_for('login') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">Sign in with GitHub</button>
+    </form>
+  </section>
+  {% else %}
+  <section class="card" aria-labelledby="add-trip-heading">
+    <h2 id="add-trip-heading">Add a trip</h2>
+    <form method="post" action="{{ url_for('add_trip') }}" class="trip-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field field-destination">
+        <label for="add-destination">Destination</label>
+        <input id="add-destination" name="destination" maxlength="120" required>
       </div>
-      {% if session.get("user_id") %}
-      <form method="post" action="{{ url_for('logout') }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="secondary" type="submit">Sign out</button>
-      </form>
-      {% endif %}
-    </header>
-    {% for category, message in get_flashed_messages(with_categories=true) %}
-    <p class="notice {{ category }}" role="status">{{ message }}</p>
-    {% endfor %}
-    {% if not session.get("user_id") %}
-    <section class="card">
-      <h2>Your trips, in one place</h2>
-      <p>Save destinations and dates for your upcoming holidays.</p>
-      <form method="post" action="{{ url_for('login') }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit">Sign in with GitHub</button>
-      </form>
-    </section>
-    {% else %}
-    <section class="card">
-      <h2>Add a trip</h2>
-      <form method="post" action="{{ url_for('add_trip') }}" class="trip-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <label>Destination <input name="destination" maxlength="120" required></label>
-        <label>Start date <input type="date" name="start_date" required></label>
-        <label>End date <input type="date" name="end_date" required></label>
-        <button type="submit">Add trip</button>
-      </form>
-    </section>
-    <section aria-labelledby="trips-heading">
-      <h2 id="trips-heading">Your trips</h2>
-      {% for trip in trips %}
-      <article class="card trip">
-        <div><h3>{{ trip.destination }}</h3><p>{{ trip.start_date }} &ndash; {{ trip.end_date }}</p></div>
-        <form method="post" action="{{ url_for('delete_trip', trip_id=trip.id) }}">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button class="secondary" type="submit" aria-label="Delete {{ trip.destination }}">Delete</button>
-        </form>
-      </article>
+      <div class="field">
+        <label for="add-start-date">Start date</label>
+        <input id="add-start-date" type="date" name="start_date" required>
+      </div>
+      <div class="field">
+        <label for="add-end-date">End date</label>
+        <input id="add-end-date" type="date" name="end_date" required>
+      </div>
+      <button type="submit" class="form-submit">Add trip</button>
+    </form>
+  </section>
+  <section aria-labelledby="trips-heading">
+    <h2 id="trips-heading">Your trips</h2>
+    {% for trip in trips %}
+    <article class="card trip{% if confirm_delete == trip.id %} is-confirming{% endif %}" id="trip-{{ trip.id }}">
+      <div class="trip-info">
+        <h3><a class="trip-link" href="{{ url_for('trip_detail', trip_id=trip.id) }}">{{ trip.destination }}</a></h3>
+        <p class="trip-dates">{{ trip.start_date }} &ndash; {{ trip.end_date }}</p>
+      </div>
+      {% if confirm_delete == trip.id %}
+      <div class="trip-confirm" role="region" aria-label="Confirm deleting {{ trip.destination }}">
+        <p class="confirm-prompt">Delete <strong>{{ trip.destination }}</strong>? This cannot be undone.</p>
+        <div class="trip-actions">
+          <form method="post" action="{{ url_for('delete_trip', trip_id=trip.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="confirm" value="1">
+            <input type="hidden" name="origin" value="index">
+            <button class="danger" type="submit" aria-label="Confirm delete {{ trip.destination }}">Confirm delete</button>
+          </form>
+          <a class="button-link secondary" href="{{ url_for('index') }}#trip-{{ trip.id }}">Cancel</a>
+        </div>
+      </div>
       {% else %}
-      <p>No trips yet. Add one above to get started.</p>
-      {% endfor %}
-    </section>
-    {% endif %}
-  </main>
-</body>
-</html>
+      <div class="trip-actions">
+        <a class="button-link secondary" href="{{ url_for('trip_detail', trip_id=trip.id) }}">Open trip</a>
+        <a class="button-link secondary danger-outline" href="{{ url_for('index', confirm_delete=trip.id) }}#trip-{{ trip.id }}" aria-label="Delete {{ trip.destination }}">Delete</a>
+      </div>
+      {% endif %}
+    </article>
+    {% else %}
+    <p>No trips yet. Add one above to get started.</p>
+    {% endfor %}
+  </section>
+  {% endif %}
+{% endblock %}

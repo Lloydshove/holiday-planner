@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Holiday planner{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main>
+    <header class="site-header">
+      <div class="header-copy">
+        {% block header_title %}
+        <p class="eyebrow">Plan your next adventure</p>
+        <h1>Holiday planner</h1>
+        {% endblock %}
+      </div>
+      {% if session.get("user_id") %}
+      <form method="post" action="{{ url_for('logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="secondary" type="submit">Sign out</button>
+      </form>
+      {% endif %}
+    </header>
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+    <p class="notice {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</p>
+    {% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
