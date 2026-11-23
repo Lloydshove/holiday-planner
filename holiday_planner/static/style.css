@@ -55,13 +55,16 @@ p:last-child { margin-bottom: 0; }
 }
 .segmented-nav {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: .3rem;
   padding: .3rem;
   background: #e2edea;
   border: 1px solid #c3d9d3;
   border-radius: .75rem;
   margin-bottom: 1.25rem;
+}
+.segment-link-capture {
+  display: none;
 }
 .segment-link {
   display: inline-flex;
@@ -208,7 +211,7 @@ button, .button-link {
   margin-bottom: 0;
 }
 .trip-focused-pane {
-  max-width: 780px;
+  width: 100%;
 }
 .idea-form {
   display: grid;
@@ -476,9 +479,10 @@ a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visibl
 /* Tablet / iPad */
 @media (max-width: 1024px) {
   main { padding: 1.5rem 1.25rem; }
+  .segmented-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .segment-link-capture { display: inline-flex; }
   .trip-workspace-grid { grid-template-columns: 1fr; }
   .trip-pane-capture { display: none; }
-  .trip-focused-pane { max-width: none; }
   .trips-grid { grid-template-columns: 1fr; }
   .trip-form,
   .idea-form,

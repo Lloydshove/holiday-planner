@@ -64,7 +64,7 @@
       <span>Idea Inbox</span>
       <span class="segment-count">{{ total_ideas_count }}</span>
     </a>
-    <a class="segment-link{% if active_tab == 'capture' %} is-active{% endif %}" href="{{ url_for('trip_detail', trip_id=trip.id, tab='capture') }}"{% if active_tab == 'capture' %} aria-current="page"{% endif %}>
+    <a class="segment-link segment-link-capture{% if active_tab == 'capture' %} is-active{% endif %}" href="{{ url_for('trip_detail', trip_id=trip.id, tab='capture') }}"{% if active_tab == 'capture' %} aria-current="page"{% endif %}>
       <span>Quick Capture</span>
     </a>
     <a class="segment-link{% if active_tab == 'settings' %} is-active{% endif %}" href="{{ url_for('trip_detail', trip_id=trip.id, tab='settings') }}"{% if active_tab == 'settings' %} aria-current="page"{% endif %}>
@@ -244,7 +244,7 @@
         {% if has_active_filters %}
         <p class="empty-state">No ideas match the active filters. <a href="{{ url_for('trip_detail', trip_id=trip.id) }}#ideas">Clear filters</a> to view all ideas.</p>
         {% else %}
-        <p class="empty-state">No ideas yet. <a class="empty-capture-link" href="{{ url_for('trip_detail', trip_id=trip.id, tab='capture') }}">Capture your first spot, meal, or stay</a>.</p>
+        <p class="empty-state">No ideas yet. <a class="empty-capture-link" href="{{ url_for('trip_detail', trip_id=trip.id, tab='capture') }}" data-desktop-focus-capture>Capture your first spot, meal, or stay</a>.</p>
         {% endif %}
       {% endif %}
     </section>

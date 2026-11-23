@@ -852,7 +852,7 @@ def test_trip_segmented_tabs_render_active_state_and_isolate_sections(client):
     # Capture tab isolates Quick Capture cleanly
     capture_page = client.get("/trips/1?tab=capture")
     assert capture_page.status_code == 200
-    assert b'class="segment-link is-active" href="/trips/1?tab=capture" aria-current="page"' in capture_page.data
+    assert b'class="segment-link segment-link-capture is-active" href="/trips/1?tab=capture" aria-current="page"' in capture_page.data
     assert b'id="capture-idea"' in capture_page.data
     assert b'<input type="hidden" name="tab" value="capture">' in capture_page.data
     assert b'id="ideas"' not in capture_page.data
@@ -988,11 +988,14 @@ def test_responsive_assets_and_progressive_category_picker_are_served(client):
     assert b"/static/category-picker.js" in trip_page.data
     assert b"data-category-picker" in trip_page.data
     assert b"data-custom-category-field" in trip_page.data
+    assert b"data-desktop-focus-capture" in trip_page.data
+    assert b'class="segment-link segment-link-capture"' in trip_page.data
 
     picker_js = client.get("/static/category-picker.js")
     assert picker_js.status_code == 200
     assert b"__custom__" in picker_js.data
     assert b"customField.hidden" in picker_js.data
+    assert b"data-desktop-focus-capture" in picker_js.data
 
     css_res = client.get("/static/style.css")
     assert css_res.status_code == 200
@@ -1000,5 +1003,9 @@ def test_responsive_assets_and_progressive_category_picker_are_served(client):
     assert b"@media (max-width: 1024px)" in css_res.data
     assert b"@media (max-width: 640px)" in css_res.data
     assert b".segmented-nav" in css_res.data
+    assert b"grid-template-columns: repeat(2, minmax(0, 1fr))" in css_res.data
+    assert b"grid-template-columns: repeat(3, minmax(0, 1fr))" in css_res.data
+    assert b".segment-link-capture" in css_res.data
+    assert b"max-width: 780px" not in css_res.data
     assert b".trip-workspace-grid" in css_res.data
     assert b"min-height: 44px" in css_res.data

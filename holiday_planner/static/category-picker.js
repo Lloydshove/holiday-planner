@@ -34,11 +34,33 @@
     });
   }
 
+  function initDesktopCaptureLinks() {
+    var links = document.querySelectorAll("[data-desktop-focus-capture]");
+    links.forEach(function (link) {
+      link.addEventListener("click", function (event) {
+        var capturePane = document.getElementById("capture-idea");
+        var titleInput = document.getElementById("idea-title");
+        if (!capturePane || !titleInput) {
+          return;
+        }
+        if (window.getComputedStyle(capturePane).display !== "none") {
+          event.preventDefault();
+          titleInput.focus();
+          if (typeof capturePane.scrollIntoView === "function") {
+            capturePane.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          }
+        }
+      });
+    });
+  }
+
   if (typeof document !== "undefined") {
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", initCategoryPickers);
+      document.addEventListener("DOMContentLoaded", initDesktopCaptureLinks);
     } else {
       initCategoryPickers();
+      initDesktopCaptureLinks();
     }
   }
 })();
