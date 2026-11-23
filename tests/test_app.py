@@ -510,7 +510,16 @@ def test_idea_filtering_archived_visibility_and_empty_states(app, client):
     assert b"is-archived" in default_page.data
     assert b"status-archived" in default_page.data
     assert b">Archived</span>" in default_page.data
-    assert b"Clear filters" not in default_page.data
+    assert b"Apply filters" not in default_page.data
+    assert b"data-idea-filter-form" in default_page.data
+    assert b"/static/idea-filters.js" in default_page.data
+    assert b'href="/trips/1#ideas">Clear filters</a>' in default_page.data
+    assert b"Active filters:" not in default_page.data
+
+    filters_js = client.get("/static/idea-filters.js")
+    assert filters_js.status_code == 200
+    assert b"requestSubmit" in filters_js.data
+    assert b"change" in filters_js.data
 
     # Filter by status
     shortlisted_page = client.get("/trips/1?status=shortlisted")

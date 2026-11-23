@@ -53,7 +53,7 @@
   <section class="ideas-section" id="ideas" aria-labelledby="ideas-heading">
     <div class="ideas-toolbar">
       <h2 id="ideas-heading">Idea inbox ({% if has_active_filters %}{{ ideas|length }} of {{ total_ideas_count }}{% else %}{{ ideas|length }}{% endif %})</h2>
-      <form method="get" action="{{ url_for('trip_detail', trip_id=trip.id) }}#ideas" class="filter-form" aria-label="Filter ideas">
+      <form method="get" action="{{ url_for('trip_detail', trip_id=trip.id) }}#ideas" class="filter-form" aria-label="Filter ideas" data-idea-filter-form>
         <div class="field">
           <label for="filter-status">Status</label>
           <select id="filter-status" name="status">
@@ -72,7 +72,7 @@
             {% endfor %}
           </select>
         </div>
-        <button type="submit" class="secondary filter-submit">Apply filters</button>
+        <a class="button-link secondary filter-clear" href="{{ url_for('trip_detail', trip_id=trip.id) }}#ideas">Clear filters</a>
       </form>
       {% if has_active_filters %}
       <div class="active-filters" role="status">
@@ -81,7 +81,6 @@
           {% if status_filter %}<span class="filter-chip">Status: {{ status_labels.get(status_filter, status_filter) }}</span>{% endif %}
           {% if category_filter %}<span class="filter-chip">Category: {{ category_filter }}</span>{% endif %}
         </p>
-        <a class="button-link secondary" href="{{ url_for('trip_detail', trip_id=trip.id) }}#ideas">Clear filters</a>
       </div>
       {% endif %}
     </div>
