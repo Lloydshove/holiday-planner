@@ -15,6 +15,13 @@ from werkzeug.exceptions import BadGateway
 csrf = CSRFProtect()
 oauth = OAuth()
 STARTER_CATEGORIES = ("Sight", "Food", "Stay", "Transport", "Activity", "Note")
+IDEA_STATUSES = ("idea", "shortlisted", "scheduled", "archived")
+IDEA_STATUS_LABELS = {
+    "idea": "Idea",
+    "shortlisted": "Shortlisted",
+    "scheduled": "Scheduled",
+    "archived": "Archived",
+}
 MAX_IDEA_TITLE_LEN = 160
 MAX_IDEA_CATEGORY_LEN = 40
 MAX_IDEA_URL_LEN = 500
@@ -160,6 +167,26 @@ def create_app(test_config=None):
             abort(404)
         return trip
 
+    def get_owned_idea(trip_id, idea_id):
+        get_owned_trip(trip_id)
+        idea = database().execute(
+            "SELECT id, trip_id, owner_id, title, category, url, notes, status, created_at "
+            "FROM ideas WHERE id = ? AND trip_id = ? AND owner_id = ?",
+            (idea_id, trip_id, session["user_id"]),
+        ).fetchone()
+        if idea is None:
+            abort(404)
+        return idea
+
+    def trip_filter_params():
+        raw_status = request.form.get("filter_status", "").strip().lower()
+        filter_status = raw_status if raw_status in IDEA_STATUSES else None
+        raw_category = " ".join(request.form.get("filter_category", "").split())
+        filter_category = (
+            raw_category if raw_category and len(raw_category) <= MAX_IDEA_CATEGORY_LEN else None
+        )
+        return filter_status, filter_category
+
     def get_trip_categories(trip_id, owner_id):
         rows = database().execute(
             "SELECT DISTINCT category FROM ideas WHERE trip_id = ? AND owner_id = ? ORDER BY id",
@@ -291,13 +318,42 @@ def create_app(test_config=None):
     @login_required
     def trip_detail(trip_id):
         trip = get_owned_trip(trip_id)
-        ideas = database().execute(
-            "SELECT id, title, category, url, notes, status, created_at FROM ideas "
-            "WHERE trip_id = ? AND owner_id = ? ORDER BY id DESC",
-            (trip_id, session["user_id"]),
-        ).fetchall()
         categories = get_trip_categories(trip_id, session["user_id"])
+
+        raw_status = request.args.get("status", "").strip().lower()
+        status_filter = "" if raw_status in ("", "all") else raw_status
+
+        raw_category = " ".join(request.args.get("category", "").split())
+        category_filter = ""
+        if raw_category:
+            lowered = raw_category.casefold()
+            for candidate in categories:
+                if candidate.casefold() == lowered:
+                    category_filter = candidate
+                    break
+            else:
+                category_filter = raw_category
+
+        clauses = ["trip_id = ?", "owner_id = ?"]
+        params = [trip_id, session["user_id"]]
+        if status_filter:
+            clauses.append("status = ?")
+            params.append(status_filter)
+        if category_filter:
+            clauses.append("category = ?")
+            params.append(category_filter)
+
+        ideas = database().execute(
+            f"SELECT id, title, category, url, notes, status, created_at FROM ideas "
+            f"WHERE {' AND '.join(clauses)} ORDER BY id DESC",
+            params,
+        ).fetchall()
+        total_ideas_count = database().execute(
+            "SELECT COUNT(*) FROM ideas WHERE trip_id = ? AND owner_id = ?",
+            (trip_id, session["user_id"]),
+        ).fetchone()[0]
         confirm_delete = request.args.get("confirm_delete") == "1"
+        edit_idea_id = request.args.get("edit_idea", type=int)
         edit_form = {
             "destination": trip["destination"],
             "start_date": trip["start_date"],
@@ -315,8 +371,15 @@ def create_app(test_config=None):
             "trip.html",
             trip=trip,
             ideas=ideas,
+            total_ideas_count=total_ideas_count,
             categories=categories,
+            statuses=IDEA_STATUSES,
+            status_labels=IDEA_STATUS_LABELS,
+            status_filter=status_filter,
+            category_filter=category_filter,
+            has_active_filters=bool(status_filter or category_filter),
             confirm_delete=confirm_delete,
+            edit_idea_id=edit_idea_id,
             edit_form=edit_form,
             end_date_min=end_date_min,
         )
@@ -340,6 +403,93 @@ def create_app(test_config=None):
         database().commit()
         flash("Idea added.", "success")
         return redirect(url_for("trip_detail", trip_id=trip_id))
+
+    @app.post("/trips/<int:trip_id>/ideas/<int:idea_id>/status")
+    @login_required
+    def update_idea_status(trip_id, idea_id):
+        get_owned_idea(trip_id, idea_id)
+        filter_status, filter_category = trip_filter_params()
+        new_status = request.form.get("status", "").strip().lower()
+        if new_status not in IDEA_STATUSES:
+            flash("Choose a valid status: idea, shortlisted, scheduled, or archived.", "error")
+            return redirect(
+                url_for("trip_detail", trip_id=trip_id, status=filter_status, category=filter_category)
+            )
+        database().execute(
+            "UPDATE ideas SET status = ? WHERE id = ? AND trip_id = ? AND owner_id = ?",
+            (new_status, idea_id, trip_id, session["user_id"]),
+        )
+        database().commit()
+        flash(f"Idea marked as {IDEA_STATUS_LABELS[new_status]}.", "success")
+        return redirect(
+            url_for("trip_detail", trip_id=trip_id, status=filter_status, category=filter_category)
+        )
+
+    @app.post("/trips/<int:trip_id>/ideas/<int:idea_id>/edit")
+    @login_required
+    def edit_idea(trip_id, idea_id):
+        idea = get_owned_idea(trip_id, idea_id)
+        filter_status, filter_category = trip_filter_params()
+        existing_categories = get_trip_categories(trip_id, session["user_id"])
+        validated, error = validate_idea_form(request.form, existing_categories)
+        if error is not None:
+            flash(error, "error")
+            return redirect(
+                url_for(
+                    "trip_detail",
+                    trip_id=trip_id,
+                    edit_idea=idea_id,
+                    status=filter_status,
+                    category=filter_category,
+                )
+                + f"#idea-{idea_id}"
+            )
+        if "status" in request.form:
+            new_status = request.form.get("status", "").strip().lower()
+            if new_status not in IDEA_STATUSES:
+                flash("Choose a valid status: idea, shortlisted, scheduled, or archived.", "error")
+                return redirect(
+                    url_for(
+                        "trip_detail",
+                        trip_id=trip_id,
+                        edit_idea=idea_id,
+                        status=filter_status,
+                        category=filter_category,
+                    )
+                    + f"#idea-{idea_id}"
+                )
+        else:
+            new_status = idea["status"]
+
+        title, category, url, notes = validated
+        database().execute(
+            "UPDATE ideas SET title = ?, category = ?, url = ?, notes = ?, status = ? "
+            "WHERE id = ? AND trip_id = ? AND owner_id = ?",
+            (title, category, url, notes, new_status, idea_id, trip_id, session["user_id"]),
+        )
+        database().commit()
+        flash("Idea updated.", "success")
+        return redirect(
+            url_for("trip_detail", trip_id=trip_id, status=filter_status, category=filter_category)
+            + f"#idea-{idea_id}"
+        )
+
+    @app.post("/trips/<int:trip_id>/ideas/<int:idea_id>/delete")
+    @login_required
+    def delete_idea(trip_id, idea_id):
+        get_owned_idea(trip_id, idea_id)
+        filter_status, filter_category = trip_filter_params()
+        result = database().execute(
+            "DELETE FROM ideas WHERE id = ? AND trip_id = ? AND owner_id = ?",
+            (idea_id, trip_id, session["user_id"]),
+        )
+        database().commit()
+        if result.rowcount == 0:
+            abort(404)
+        flash("Idea deleted.", "success")
+        return redirect(
+            url_for("trip_detail", trip_id=trip_id, status=filter_status, category=filter_category)
+        )
 
     @app.post("/trips/<int:trip_id>/edit")
     @login_required

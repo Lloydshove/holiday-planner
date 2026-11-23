@@ -371,6 +371,9 @@ def test_login_is_required(client):
     assert client.post("/trips").status_code == 302
     assert client.get("/trips/1").status_code == 302
     assert client.post("/trips/1/ideas").status_code == 302
+    assert client.post("/trips/1/ideas/1/status").status_code == 302
+    assert client.post("/trips/1/ideas/1/edit").status_code == 302
+    assert client.post("/trips/1/ideas/1/delete").status_code == 302
     assert client.post("/trips/1/edit").status_code == 302
     assert client.get("/trips/1/delete").status_code == 302
     assert client.post("/trips/1/delete").status_code == 302
@@ -398,6 +401,9 @@ def test_csrf_protects_mutations(app):
     sign_in(client, 1)
     assert client.post("/trips", data={}).status_code == 400
     assert client.post("/trips/1/ideas", data={}).status_code == 400
+    assert client.post("/trips/1/ideas/1/status", data={}).status_code == 400
+    assert client.post("/trips/1/ideas/1/edit", data={}).status_code == 400
+    assert client.post("/trips/1/ideas/1/delete", data={}).status_code == 400
     assert client.post("/trips/1/edit", data={}).status_code == 400
     assert client.post("/trips/1/delete", data={"confirm": "1"}).status_code == 400
     assert client.post("/auth/logout").status_code == 400
@@ -418,6 +424,19 @@ def test_csrf_protects_mutations(app):
         "category_preset": "Sight",
     })
     assert idea_res.status_code == 302
+    status_res = client.post("/trips/1/ideas/1/status", data={
+        "csrf_token": token,
+        "status": "shortlisted",
+    })
+    assert status_res.status_code == 302
+    edit_idea_res = client.post("/trips/1/ideas/1/edit", data={
+        "csrf_token": token,
+        "title": "Upper Belvedere",
+        "category_preset": "Sight",
+    })
+    assert edit_idea_res.status_code == 302
+    del_idea_res = client.post("/trips/1/ideas/1/delete", data={"csrf_token": token})
+    assert del_idea_res.status_code == 302
     edit_res = client.post("/trips/1/edit", data={
         "csrf_token": token,
         "destination": "Salzburg",
@@ -465,3 +484,200 @@ def test_callback_cannot_be_http_in_production(app):
     config["SESSION_COOKIE_SECURE"] = True
     with pytest.raises(RuntimeError, match="OAUTH_REDIRECT_URI"):
         create_app(config)
+
+
+def test_idea_filtering_archived_visibility_and_empty_states(app, client):
+    sign_in(client, 1)
+    client.post("/trips", data={
+        "destination": "Kyoto", "start_date": "2027-04-01", "end_date": "2027-04-10"
+    })
+    client.post("/trips/1/ideas", data={"title": "Fushimi Inari", "category_preset": "Sight"})
+    client.post("/trips/1/ideas", data={
+        "title": "Nishiki Market",
+        "category_preset": "__custom__",
+        "category": "Street Food",
+    })
+    client.post("/trips/1/ideas", data={"title": "Kinkaku-ji", "category_preset": "Sight"})
+    client.post("/trips/1/ideas/2/status", data={"status": "shortlisted"})
+    client.post("/trips/1/ideas/3/status", data={"status": "archived"})
+
+    # Default view keeps archived items visible with distinct class and Archived badge
+    default_page = client.get("/trips/1")
+    assert default_page.status_code == 200
+    assert b"Fushimi Inari" in default_page.data
+    assert b"Nishiki Market" in default_page.data
+    assert b"Kinkaku-ji" in default_page.data
+    assert b"is-archived" in default_page.data
+    assert b"status-archived" in default_page.data
+    assert b">Archived</span>" in default_page.data
+    assert b"Clear filters" not in default_page.data
+
+    # Filter by status
+    shortlisted_page = client.get("/trips/1?status=shortlisted")
+    assert b"Nishiki Market" in shortlisted_page.data
+    assert b"Fushimi Inari" not in shortlisted_page.data
+    assert b"Kinkaku-ji" not in shortlisted_page.data
+    assert b"Active filters:" in shortlisted_page.data
+    assert b"Status: Shortlisted" in shortlisted_page.data
+    assert b"Clear filters" in shortlisted_page.data
+
+    # Filter by custom category (including case/whitespace normalization)
+    custom_cat_page = client.get("/trips/1?category=street+++food")
+    assert b"Nishiki Market" in custom_cat_page.data
+    assert b"Fushimi Inari" not in custom_cat_page.data
+    assert b"Category: Street Food" in custom_cat_page.data
+
+    # Combined status + category filter with empty result
+    empty_filtered = client.get("/trips/1?status=archived&category=Street+Food")
+    assert empty_filtered.status_code == 200
+    assert b"No ideas match the active filters." in empty_filtered.data
+    assert b"Clear filters" in empty_filtered.data
+
+
+def test_idea_status_transitions_aria_labels_and_invalid_status(app, client):
+    sign_in(client, 1)
+    client.post("/trips", data={
+        "destination": "Osaka", "start_date": "2027-05-01", "end_date": "2027-05-06"
+    })
+    client.post("/trips/1/ideas", data={"title": "Dotonbori", "category_preset": "Food"})
+
+    page = client.get("/trips/1")
+    for expected_label in (
+        b'aria-label="Shortlist Dotonbori"',
+        b'aria-label="Schedule Dotonbori"',
+        b'aria-label="Archive Dotonbori"',
+        b'aria-label="Edit Dotonbori"',
+        b'aria-label="Delete Dotonbori"',
+        b'aria-label="Confirm delete Dotonbori"',
+    ):
+        assert expected_label in page.data
+
+    for target_status, expected_badge in (
+        ("shortlisted", b"Shortlisted"),
+        ("scheduled", b"Scheduled"),
+        ("archived", b"Archived"),
+        ("idea", b"Idea"),
+    ):
+        res = client.post("/trips/1/ideas/1/status", data={"status": target_status}, follow_redirects=True)
+        assert res.status_code == 200
+        assert expected_badge in res.data
+        with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
+            row = db.execute("SELECT status FROM ideas WHERE id = 1").fetchone()
+            assert row == (target_status,)
+
+    # Invalid status is rejected without modifying stored data
+    bad = client.post("/trips/1/ideas/1/status", data={"status": "booked"}, follow_redirects=True)
+    assert b'role="alert"' in bad.data
+    assert b"Choose a valid status" in bad.data
+    with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
+        assert db.execute("SELECT status FROM ideas WHERE id = 1").fetchone() == ("idea",)
+
+
+def test_idea_editing_validation_and_single_confirmation_deletion(app, client):
+    sign_in(client, 1)
+    client.post("/trips", data={
+        "destination": "Sapporo", "start_date": "2027-06-01", "end_date": "2027-06-05"
+    })
+    client.post("/trips/1/ideas", data={
+        "title": "Odori Park",
+        "category_preset": "Sight",
+        "url": "https://example.com/odori",
+        "notes": "Morning walk",
+    })
+    client.post("/trips/1/ideas", data={"title": "Keep Me", "category_preset": "Note"})
+
+    # Opening inline edit form renders labeled fields and action aria-labels
+    edit_view = client.get("/trips/1?edit_idea=1")
+    assert edit_view.status_code == 200
+    assert b'action="/trips/1/ideas/1/edit"' in edit_view.data
+    assert b'for="edit-idea-title-1"' in edit_view.data
+    assert b'for="edit-idea-status-1"' in edit_view.data
+    assert b'aria-label="Save changes to Odori Park"' in edit_view.data
+    assert b'aria-label="Cancel editing Odori Park"' in edit_view.data
+
+    # Valid edit updates all fields, normalizes custom category, and escapes HTML
+    res = client.post("/trips/1/ideas/1/edit", data={
+        "title": "  Odori & <script>x</script>  ",
+        "category_preset": "__custom__",
+        "category": "  Winter   Events ",
+        "status": "shortlisted",
+        "url": "https://example.com/winter",
+        "notes": "  Bring gloves  ",
+    }, follow_redirects=True)
+    assert res.status_code == 200
+    assert b"Idea updated." in res.data
+    assert b"<script>" not in res.data
+    assert b"&lt;script&gt;x&lt;/script&gt;" in res.data
+    with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
+        row = db.execute(
+            "SELECT title, category, url, notes, status FROM ideas WHERE id = 1"
+        ).fetchone()
+    assert row == (
+        "Odori & <script>x</script>",
+        "Winter Events",
+        "https://example.com/winter",
+        "Bring gloves",
+        "shortlisted",
+    )
+
+    # Invalid edits leave stored data unchanged
+    for bad_payload in (
+        {"title": "   ", "category": "Sight", "status": "shortlisted"},
+        {"title": "x" * 161, "category": "Sight", "status": "shortlisted"},
+        {"title": "Valid", "category": "c" * 41, "status": "shortlisted"},
+        {"title": "Valid", "category": "Sight", "url": "javascript:alert(1)", "status": "shortlisted"},
+        {"title": "Valid", "category": "Sight", "notes": "n" * 2001, "status": "shortlisted"},
+        {"title": "Valid", "category": "Sight", "status": "invalid"},
+    ):
+        bad_res = client.post("/trips/1/ideas/1/edit", data=bad_payload, follow_redirects=True)
+        assert b'role="alert"' in bad_res.data
+        with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
+            assert db.execute(
+                "SELECT title, category, url, notes, status FROM ideas WHERE id = 1"
+            ).fetchone() == row
+
+    # Single-confirmation delete removes only the targeted idea
+    assert b'class="delete-confirm"' in res.data
+    deleted = client.post("/trips/1/ideas/1/delete", follow_redirects=True)
+    assert deleted.status_code == 200
+    assert b"Idea deleted." in deleted.data
+    assert b"Keep Me" in deleted.data
+    with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
+        remaining = db.execute("SELECT id, title FROM ideas ORDER BY id").fetchall()
+    assert remaining == [(2, "Keep Me")]
+
+
+def test_idea_actions_enforce_cross_user_and_cross_trip_404_isolation(app, client):
+    sign_in(client, 1)
+    client.post("/trips", data={
+        "destination": "Lisbon", "start_date": "2027-01-01", "end_date": "2027-01-05"
+    })
+    client.post("/trips", data={
+        "destination": "Porto", "start_date": "2027-02-01", "end_date": "2027-02-05"
+    })
+    client.post("/trips/1/ideas", data={"title": "Alfama", "category_preset": "Sight"})
+
+    # Same user targeting idea #1 through trip #2 gets 404 without side effects
+    assert client.post("/trips/2/ideas/1/status", data={"status": "archived"}).status_code == 404
+    assert client.post("/trips/2/ideas/1/edit", data={
+        "title": "Hijacked", "category": "Food"
+    }).status_code == 404
+    assert client.post("/trips/2/ideas/1/delete").status_code == 404
+
+    # Missing idea_id gets 404
+    assert client.post("/trips/1/ideas/999/status", data={"status": "archived"}).status_code == 404
+    assert client.post("/trips/1/ideas/999/edit", data={
+        "title": "Missing", "category": "Food"
+    }).status_code == 404
+    assert client.post("/trips/1/ideas/999/delete").status_code == 404
+
+    # Different user gets 404
+    sign_in(client, 2)
+    assert client.post("/trips/1/ideas/1/status", data={"status": "archived"}).status_code == 404
+    assert client.post("/trips/1/ideas/1/edit", data={
+        "title": "Hijacked", "category": "Food"
+    }).status_code == 404
+    assert client.post("/trips/1/ideas/1/delete").status_code == 404
+
+    with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
+        assert db.execute("SELECT title, status FROM ideas WHERE id = 1").fetchone() == ("Alfama", "idea")

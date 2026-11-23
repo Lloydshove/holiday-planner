@@ -134,6 +134,49 @@ button, .button-link {
   justify-content: flex-start;
 }
 .ideas-section { margin-bottom: 1rem; }
+.ideas-toolbar {
+  display: grid;
+  gap: .85rem;
+  margin-bottom: 1rem;
+}
+.filter-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: .75rem;
+  align-items: end;
+  background: white;
+  border: 1px solid #d5e4e0;
+  border-radius: .8rem;
+  padding: 1rem 1.25rem;
+}
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: .75rem;
+  padding: .75rem 1rem;
+  border-radius: .6rem;
+  border: 1px solid #b5d5cc;
+  background: #e9f4f1;
+}
+.active-filters-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem;
+  margin: 0;
+  font-weight: 600;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: .2rem .6rem;
+  border-radius: 999px;
+  background: white;
+  border: 1px solid #8da49e;
+  font-size: .875rem;
+}
 .ideas-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -143,7 +186,19 @@ button, .button-link {
   margin-bottom: 0;
   display: flex;
   flex-direction: column;
-  gap: .5rem;
+  gap: .65rem;
+}
+.idea-card.is-editing {
+  grid-column: 1 / -1;
+}
+.idea-card.is-archived {
+  background: #f5f7f7;
+  border-style: dashed;
+  border-color: #9fb0ad;
+}
+.idea-card.is-archived .idea-title,
+.idea-card.is-archived .idea-notes {
+  color: #4b5d66;
 }
 .idea-header {
   display: flex;
@@ -155,19 +210,50 @@ button, .button-link {
   margin: 0;
   font-size: 1.05rem;
 }
-.category-badge {
+.idea-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: .35rem;
+  flex-shrink: 0;
+  max-width: 100%;
+}
+.category-badge,
+.status-badge {
   display: inline-flex;
   align-items: center;
   padding: .2rem .6rem;
   border-radius: 999px;
-  border: 1px solid #b5d5cc;
-  background: #e9f4f1;
-  color: #135e50;
   font-size: .85rem;
   font-weight: 600;
   flex-shrink: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+.category-badge {
+  border: 1px solid #b5d5cc;
+  background: #e9f4f1;
+  color: #135e50;
+}
+.status-badge {
+  border: 1px solid #c2d1ce;
+  background: #eef3f2;
+  color: #36505c;
+}
+.status-badge.status-shortlisted {
+  border-color: #e0b44c;
+  background: #fef3c7;
+  color: #784b00;
+}
+.status-badge.status-scheduled {
+  border-color: #93c5fd;
+  background: #e0effe;
+  color: #1e429f;
+}
+.status-badge.status-archived {
+  border-color: #9ca3af;
+  background: #e5e7eb;
+  color: #374151;
 }
 .idea-link-row { margin: 0; }
 .idea-link {
@@ -185,8 +271,69 @@ button, .button-link {
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
+.idea-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  align-items: center;
+  margin-top: auto;
+  padding-top: .25rem;
+}
+.idea-actions form {
+  margin: 0;
+}
+.action-btn {
+  padding: .45rem .75rem;
+  font-size: .92rem;
+}
+.delete-confirm {
+  display: inline-block;
+}
+.delete-confirm[open] {
+  flex: 1 0 100%;
+}
+.delete-confirm summary {
+  list-style: none;
+}
+.delete-confirm summary::-webkit-details-marker {
+  display: none;
+}
+.idea-delete-prompt {
+  margin-top: .6rem;
+  padding: .75rem;
+  border-radius: .5rem;
+  border: 1px solid #f0b4b0;
+  background: #fff7f6;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: .6rem;
+}
+.idea-delete-prompt .confirm-prompt {
+  margin: 0;
+}
+.idea-edit-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: .85rem;
+  align-items: end;
+  padding-top: .5rem;
+  border-top: 1px solid #d5e4e0;
+}
+.idea-edit-form .field-idea-title,
+.idea-edit-form .field-idea-url,
+.idea-edit-form .field-idea-notes {
+  grid-column: 1 / -1;
+}
+.idea-edit-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem;
+}
 .empty-state { color: #36505c; }
-a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 3px solid #0f766e;
   outline-offset: 2px;
 }
@@ -194,7 +341,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 /* Tablet / iPad */
 @media (max-width: 960px) {
   .trip-form,
-  .idea-form {
+  .idea-form,
+  .filter-form,
+  .idea-edit-form {
     grid-template-columns: 1fr 1fr;
   }
   .field-destination,
@@ -203,7 +352,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .field-idea-notes {
     grid-column: 1 / -1;
   }
-  .form-submit {
+  .form-submit,
+  .filter-submit {
     grid-column: 1 / -1;
     justify-self: start;
   }
@@ -214,9 +364,33 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   main { padding: 1.25rem 1rem; }
   .trip-form,
   .idea-form,
+  .filter-form,
+  .idea-edit-form,
   .ideas-grid { grid-template-columns: 1fr; }
   .idea-form-actions { width: 100%; }
-  .form-submit { justify-self: stretch; width: 100%; }
+  .form-submit,
+  .filter-submit { justify-self: stretch; width: 100%; }
+  .active-filters { flex-direction: column; align-items: stretch; }
+  .active-filters .button-link { width: 100%; }
+  .idea-header { flex-direction: column; align-items: flex-start; }
+  .idea-badges { justify-content: flex-start; }
+  .idea-actions { width: 100%; }
+  .idea-actions > form,
+  .idea-actions > .button-link,
+  .idea-actions > .delete-confirm {
+    flex: 1 1 auto;
+  }
+  .idea-actions > form button,
+  .idea-actions > .button-link,
+  .delete-confirm summary {
+    width: 100%;
+  }
+  .idea-edit-actions button,
+  .idea-edit-actions .button-link,
+  .idea-delete-prompt form,
+  .idea-delete-prompt button {
+    width: 100%;
+  }
   .trip { flex-direction: column; align-items: stretch; }
   .trip-actions { width: 100%; }
   .trip-actions form,
