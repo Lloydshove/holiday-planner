@@ -10,10 +10,12 @@ from authlib.integrations.flask_client import OAuth
 from flask import Flask, abort, flash, g, redirect, render_template, request, session, url_for
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.exceptions import BadGateway
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 
 csrf = CSRFProtect()
 oauth = OAuth()
+DEFAULT_ALLOWED_GITHUB_IDS = "353556"
 STARTER_CATEGORIES = ("Sight", "Food", "Stay", "Transport", "Activity", "Note")
 IDEA_STATUSES = ("idea", "shortlisted", "scheduled", "archived")
 TRIP_TABS = ("inbox", "capture", "settings")
@@ -42,6 +44,31 @@ def is_safe_http_url(value):
     return parsed.scheme.lower() in ("http", "https") and bool(hostname)
 
 
+def parse_allowed_github_ids(value):
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.split(",")]
+        if not value.strip() or any(not part or not (part.isascii() and part.isdigit()) for part in parts):
+            raise RuntimeError("ALLOWED_GITHUB_IDS must contain one or more positive integer GitHub user IDs")
+        ids = frozenset(int(part) for part in parts)
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        items = list(value)
+        if not items or any(type(item) is not int or item <= 0 for item in items):
+            raise RuntimeError("ALLOWED_GITHUB_IDS must contain one or more positive integer GitHub user IDs")
+        ids = frozenset(items)
+    else:
+        raise RuntimeError("ALLOWED_GITHUB_IDS must contain one or more positive integer GitHub user IDs")
+
+    if not ids or any(github_id <= 0 for github_id in ids):
+        raise RuntimeError("ALLOWED_GITHUB_IDS must contain one or more positive integer GitHub user IDs")
+    return ids
+
+
+def is_truthy_flag(value):
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
 def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_mapping(
@@ -49,6 +76,8 @@ def create_app(test_config=None):
         GITHUB_CLIENT_ID=os.environ.get("GITHUB_CLIENT_ID"),
         GITHUB_CLIENT_SECRET=os.environ.get("GITHUB_CLIENT_SECRET"),
         OAUTH_REDIRECT_URI=os.environ.get("OAUTH_REDIRECT_URI"),
+        ALLOWED_GITHUB_IDS=os.environ.get("ALLOWED_GITHUB_IDS", DEFAULT_ALLOWED_GITHUB_IDS),
+        TRUST_PROXY=os.environ.get("TRUST_PROXY", "0"),
         DATABASE_PATH=os.environ.get("DATABASE_PATH", str(Path(app.instance_path) / "holidays.sqlite3")),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
@@ -59,6 +88,13 @@ def create_app(test_config=None):
     for key in ("SECRET_KEY", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "OAUTH_REDIRECT_URI"):
         if not app.config.get(key):
             raise RuntimeError(f"{key} must be configured")
+
+    allowed_ids = parse_allowed_github_ids(app.config.get("ALLOWED_GITHUB_IDS"))
+    app.config["ALLOWED_GITHUB_IDS"] = allowed_ids
+    trust_proxy = is_truthy_flag(app.config.get("TRUST_PROXY"))
+    app.config["TRUST_PROXY"] = trust_proxy
+    if trust_proxy:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
     callback_uri = urlsplit(app.config["OAUTH_REDIRECT_URI"])
     if (
@@ -139,10 +175,18 @@ def create_app(test_config=None):
 
     app.jinja_env.globals["is_safe_http_url"] = is_safe_http_url
 
+    @app.before_request
+    def enforce_session_allowlist():
+        user_id = session.get("user_id")
+        if user_id is not None and (type(user_id) is not int or user_id not in allowed_ids):
+            session.clear()
+
     def login_required(view):
         @wraps(view)
         def wrapped(*args, **kwargs):
-            if "user_id" not in session:
+            user_id = session.get("user_id")
+            if type(user_id) is not int or user_id not in allowed_ids:
+                session.clear()
                 return redirect(url_for("index"))
             return view(*args, **kwargs)
 
@@ -321,6 +365,18 @@ def create_app(test_config=None):
         if not isinstance(user, dict) or type(user.get("id")) is not int or user["id"] <= 0:
             raise BadGateway("GitHub returned an invalid account")
         session.clear()
+        if user["id"] not in allowed_ids:
+            flash("This GitHub account is not authorized to access this app.", "error")
+            return (
+                render_template(
+                    "index.html",
+                    trips=[],
+                    confirm_delete=None,
+                    add_form={"destination": "", "start_date": "", "end_date": ""},
+                    end_date_min="",
+                ),
+                403,
+            )
         session["user_id"] = user["id"]
         return redirect(url_for("index"))
 

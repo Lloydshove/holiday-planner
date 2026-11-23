@@ -19,6 +19,7 @@ export GITHUB_CLIENT_ID='your-client-id'
 export GITHUB_CLIENT_SECRET='your-client-secret'
 export OAUTH_REDIRECT_URI='http://127.0.0.1:5000/auth/callback'
 export COOKIE_SECURE=0 # local HTTP only
+export ALLOWED_GITHUB_IDS='353556' # defaults to @Lloydshove (353556); set to your GitHub user ID(s) if testing with another account
 flask --app holiday_planner run
 ```
 
@@ -28,13 +29,45 @@ location. Back up the database (including any SQLite journal/WAL files) using
 SQLite's online backup facilities. Restarting or replacing ephemeral storage
 will otherwise lose data.
 
-Before deploying publicly, configure HTTPS, a persistent volume, a strong
-stable `SECRET_KEY`, GitHub OAuth callback URL, backups and a production WSGI
-server. `COOKIE_SECURE` defaults to enabled and must remain enabled for HTTPS.
-Set `OAUTH_REDIRECT_URI` to the exact HTTPS callback registered with GitHub.
-Review authentication, operational security, privacy, rate limiting, database
-migrations and deployment requirements before exposing this starter publicly.
-No hosting or deployment has been configured.
+## Run with HTTPS (Caddy + Gunicorn)
+
+A checked-in `Caddyfile` is provided at the repository root for automatic Let's
+Encrypt TLS termination over Dynamic DNS or a custom domain. `caddy` must be
+installed on the host separately, and ports `80` and `443` must reach it for
+ACME certificate issuance and HTTPS traffic.
+
+In GitHub's developer settings, register your OAuth app with homepage
+`https://<domain>` and callback URL `https://<domain>/auth/callback`.
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e '.[deploy]'
+export PLANNER_DOMAIN='your-domain.example'
+export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+export GITHUB_CLIENT_ID='your-client-id'
+export GITHUB_CLIENT_SECRET='your-client-secret'
+export OAUTH_REDIRECT_URI="https://${PLANNER_DOMAIN}/auth/callback"
+export COOKIE_SECURE=1
+export TRUST_PROXY=1
+export ALLOWED_GITHUB_IDS=353556 # comma-separated positive integer GitHub user IDs
+export DATABASE_PATH='/var/lib/holiday-planner/holidays.sqlite3'
+gunicorn -w 1 --threads 4 -b 127.0.0.1:5001 'holiday_planner:create_app()'
+```
+
+In a separate shell on the same host (with `PLANNER_DOMAIN` exported, and
+optionally `UPSTREAM_ADDR` if not `127.0.0.1:5001`), start Caddy:
+
+```sh
+caddy run --config Caddyfile
+```
+
+`ALLOWED_GITHUB_IDS` defaults to `353556` (`@Lloydshove`) when unset and fails
+closed at startup if set empty or invalid. `TRUST_PROXY=1` enables Werkzeug's
+`ProxyFix` for one reverse-proxy hop (`X-Forwarded-For`, `X-Forwarded-Proto`,
+`X-Forwarded-Host`, `X-Forwarded-Port`). Keep `COOKIE_SECURE=1`, a strong
+stable `SECRET_KEY`, and regular SQLite backups enabled when exposing the app
+on the internet.
 
 Run checks with `pytest`.
 

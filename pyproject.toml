@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8,<10"]
+deploy = ["gunicorn>=23,<24"]
 
 [tool.setuptools.packages.find]
 include = ["holiday_planner*"]

@@ -2,7 +2,9 @@ import re
 import sqlite3
 from unittest.mock import Mock
 
+from flask import request, url_for
 import pytest
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from holiday_planner import create_app, oauth
 
@@ -15,6 +17,7 @@ def app(tmp_path):
         "GITHUB_CLIENT_ID": "test-id",
         "GITHUB_CLIENT_SECRET": "test-secret",
         "OAUTH_REDIRECT_URI": "http://127.0.0.1:5000/auth/callback",
+        "ALLOWED_GITHUB_IDS": "1,2",
         "SESSION_COOKIE_SECURE": False,
         "WTF_CSRF_ENABLED": False,
         "DATABASE_PATH": str(tmp_path / "test.sqlite3"),
@@ -409,12 +412,12 @@ def test_login_is_required(client):
 
 
 def test_oauth_uses_github_id_and_clears_old_session(client, monkeypatch):
-    sign_in(client, 99)
+    sign_in(client, 1)
     monkeypatch.setattr(oauth.github, "authorize_access_token", lambda: {"access_token": "token"})
-    monkeypatch.setattr(oauth.github, "get", lambda *args, **kwargs: Mock(status_code=200, json=lambda: {"id": 123}))
+    monkeypatch.setattr(oauth.github, "get", lambda *args, **kwargs: Mock(status_code=200, json=lambda: {"id": 2}))
     assert client.get("/auth/callback").status_code == 302
     with client.session_transaction() as session:
-        assert session["user_id"] == 123
+        assert session["user_id"] == 2
         assert "access_token" not in session
 
 
@@ -762,6 +765,7 @@ def test_idea_maps_url_edit_clearing_and_legacy_db_migration(tmp_path):
         "GITHUB_CLIENT_ID": "test-id",
         "GITHUB_CLIENT_SECRET": "test-secret",
         "OAUTH_REDIRECT_URI": "http://127.0.0.1:5000/auth/callback",
+        "ALLOWED_GITHUB_IDS": "1",
         "SESSION_COOKIE_SECURE": False,
         "WTF_CSRF_ENABLED": False,
         "DATABASE_PATH": str(db_path),
@@ -1009,3 +1013,211 @@ def test_responsive_assets_and_progressive_category_picker_are_served(client):
     assert b"max-width: 780px" not in css_res.data
     assert b".trip-workspace-grid" in css_res.data
     assert b"min-height: 44px" in css_res.data
+
+
+def test_allowed_github_ids_defaults_to_lloydshove_when_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv("ALLOWED_GITHUB_IDS", raising=False)
+    default_app = create_app({
+        "TESTING": True,
+        "SECRET_KEY": "test-key",
+        "GITHUB_CLIENT_ID": "test-id",
+        "GITHUB_CLIENT_SECRET": "test-secret",
+        "OAUTH_REDIRECT_URI": "http://127.0.0.1:5000/auth/callback",
+        "SESSION_COOKIE_SECURE": False,
+        "WTF_CSRF_ENABLED": False,
+        "DATABASE_PATH": str(tmp_path / "default.sqlite3"),
+    })
+    assert default_app.config["ALLOWED_GITHUB_IDS"] == frozenset({353556})
+    default_client = default_app.test_client()
+
+    monkeypatch.setattr(oauth.github, "authorize_access_token", lambda: {"access_token": "token"})
+    monkeypatch.setattr(oauth.github, "get", lambda *args, **kwargs: Mock(status_code=200, json=lambda: {"id": 353556}))
+    assert default_client.get("/auth/callback").status_code == 302
+    with default_client.session_transaction() as session:
+        assert session["user_id"] == 353556
+
+    monkeypatch.setattr(oauth.github, "get", lambda *args, **kwargs: Mock(status_code=200, json=lambda: {"id": 1}))
+    rejected = default_client.get("/auth/callback")
+    assert rejected.status_code == 403
+    with default_client.session_transaction() as session:
+        assert "user_id" not in session
+
+
+def test_allowed_github_ids_supports_env_csv_and_iterable(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALLOWED_GITHUB_IDS", " 353556 , 42 ")
+    env_app = create_app({
+        "TESTING": True,
+        "SECRET_KEY": "test-key",
+        "GITHUB_CLIENT_ID": "test-id",
+        "GITHUB_CLIENT_SECRET": "test-secret",
+        "OAUTH_REDIRECT_URI": "http://127.0.0.1:5000/auth/callback",
+        "SESSION_COOKIE_SECURE": False,
+        "DATABASE_PATH": str(tmp_path / "env.sqlite3"),
+    })
+    assert env_app.config["ALLOWED_GITHUB_IDS"] == frozenset({353556, 42})
+
+    iter_app = create_app({
+        "TESTING": True,
+        "SECRET_KEY": "test-key",
+        "GITHUB_CLIENT_ID": "test-id",
+        "GITHUB_CLIENT_SECRET": "test-secret",
+        "OAUTH_REDIRECT_URI": "http://127.0.0.1:5000/auth/callback",
+        "ALLOWED_GITHUB_IDS": [7, 8],
+        "SESSION_COOKIE_SECURE": False,
+        "DATABASE_PATH": str(tmp_path / "iter.sqlite3"),
+    })
+    assert iter_app.config["ALLOWED_GITHUB_IDS"] == frozenset({7, 8})
+
+
+def test_non_allowlisted_oauth_login_is_rejected_without_leaking_allowlist(tmp_path, monkeypatch):
+    restricted_app = create_app({
+        "TESTING": True,
+        "SECRET_KEY": "test-key",
+        "GITHUB_CLIENT_ID": "test-id",
+        "GITHUB_CLIENT_SECRET": "test-secret",
+        "OAUTH_REDIRECT_URI": "http://127.0.0.1:5000/auth/callback",
+        "ALLOWED_GITHUB_IDS": "353556,987654",
+        "SESSION_COOKIE_SECURE": False,
+        "WTF_CSRF_ENABLED": False,
+        "DATABASE_PATH": str(tmp_path / "restricted.sqlite3"),
+    })
+    client = restricted_app.test_client()
+    sign_in(client, 353556)
+    monkeypatch.setattr(oauth.github, "authorize_access_token", lambda: {"access_token": "token"})
+    monkeypatch.setattr(oauth.github, "get", lambda *args, **kwargs: Mock(status_code=200, json=lambda: {"id": 999}))
+
+    response = client.get("/auth/callback")
+    assert response.status_code == 403
+    assert b'role="alert"' in response.data
+    assert b"not authorized" in response.data
+    assert b"Sign in with GitHub" in response.data
+    assert b"353556" not in response.data
+    assert b"987654" not in response.data
+    assert b"ALLOWED_GITHUB_IDS" not in response.data
+    with client.session_transaction() as session:
+        assert "user_id" not in session
+
+
+def test_existing_session_with_disallowed_user_is_cleared(client):
+    sign_in(client, 999)
+    index_res = client.get("/")
+    assert index_res.status_code == 200
+    assert b"Sign in with GitHub" in index_res.data
+    with client.session_transaction() as session:
+        assert "user_id" not in session
+
+    sign_in(client, 999)
+    protected_res = client.get("/trips/1")
+    assert protected_res.status_code == 302
+    with client.session_transaction() as session:
+        assert "user_id" not in session
+
+
+@pytest.mark.parametrize("bad_allowlist", [
+    "",
+    "   ",
+    "1,",
+    ",1",
+    "1,,2",
+    "0",
+    "1,0",
+    "-1",
+    "+1",
+    "abc",
+    "1.5",
+    "\u00b2",
+    [],
+    [0],
+    [-2],
+    [True],
+    ["1"],
+    None,
+    123,
+])
+def test_invalid_or_empty_allowed_github_ids_fails_closed(tmp_path, bad_allowlist):
+    with pytest.raises(RuntimeError, match="ALLOWED_GITHUB_IDS"):
+        create_app({
+            "TESTING": True,
+            "SECRET_KEY": "test-key",
+            "GITHUB_CLIENT_ID": "test-id",
+            "GITHUB_CLIENT_SECRET": "test-secret",
+            "OAUTH_REDIRECT_URI": "http://127.0.0.1:5000/auth/callback",
+            "ALLOWED_GITHUB_IDS": bad_allowlist,
+            "SESSION_COOKIE_SECURE": False,
+            "DATABASE_PATH": str(tmp_path / "bad.sqlite3"),
+        })
+
+
+def test_empty_env_allowed_github_ids_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALLOWED_GITHUB_IDS", "")
+    with pytest.raises(RuntimeError, match="ALLOWED_GITHUB_IDS"):
+        create_app({
+            "TESTING": True,
+            "SECRET_KEY": "test-key",
+            "GITHUB_CLIENT_ID": "test-id",
+            "GITHUB_CLIENT_SECRET": "test-secret",
+            "OAUTH_REDIRECT_URI": "http://127.0.0.1:5000/auth/callback",
+            "SESSION_COOKIE_SECURE": False,
+            "DATABASE_PATH": str(tmp_path / "empty-env.sqlite3"),
+        })
+
+
+def test_trust_proxy_enables_proxyfix_opt_in(tmp_path, monkeypatch):
+    monkeypatch.delenv("TRUST_PROXY", raising=False)
+    untrusted_app = create_app({
+        "TESTING": True,
+        "SECRET_KEY": "test-key",
+        "GITHUB_CLIENT_ID": "test-id",
+        "GITHUB_CLIENT_SECRET": "test-secret",
+        "OAUTH_REDIRECT_URI": "http://127.0.0.1:5000/auth/callback",
+        "ALLOWED_GITHUB_IDS": "1",
+        "SESSION_COOKIE_SECURE": False,
+        "DATABASE_PATH": str(tmp_path / "untrusted.sqlite3"),
+    })
+    assert not isinstance(untrusted_app.wsgi_app, ProxyFix)
+
+    @untrusted_app.get("/_test-proxy")
+    def untrusted_probe():
+        return f"{request.scheme}|{request.host}|{request.remote_addr}|{url_for('callback', _external=True)}"
+
+    untrusted_res = untrusted_app.test_client().get(
+        "/_test-proxy",
+        headers={
+            "Host": "127.0.0.1:5001",
+            "X-Forwarded-For": "203.0.113.10",
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "planner.example.com",
+            "X-Forwarded-Port": "443",
+        },
+    )
+    assert untrusted_res.data.startswith(b"http|127.0.0.1:5001|")
+
+    monkeypatch.setenv("TRUST_PROXY", "1")
+    trusted_app = create_app({
+        "TESTING": True,
+        "SECRET_KEY": "test-key",
+        "GITHUB_CLIENT_ID": "test-id",
+        "GITHUB_CLIENT_SECRET": "test-secret",
+        "OAUTH_REDIRECT_URI": "https://planner.example.com/auth/callback",
+        "ALLOWED_GITHUB_IDS": "1",
+        "SESSION_COOKIE_SECURE": True,
+        "DATABASE_PATH": str(tmp_path / "trusted.sqlite3"),
+    })
+    assert isinstance(trusted_app.wsgi_app, ProxyFix)
+
+    @trusted_app.get("/_test-proxy")
+    def trusted_probe():
+        return f"{request.scheme}|{request.host}|{request.remote_addr}|{url_for('callback', _external=True)}"
+
+    trusted_res = trusted_app.test_client().get(
+        "/_test-proxy",
+        headers={
+            "Host": "127.0.0.1:5001",
+            "X-Forwarded-For": "203.0.113.10",
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "planner.example.com",
+            "X-Forwarded-Port": "443",
+        },
+    )
+    assert trusted_res.data == b"https|planner.example.com|203.0.113.10|https://planner.example.com/auth/callback"
+
