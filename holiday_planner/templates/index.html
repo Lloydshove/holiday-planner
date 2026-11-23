@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
   {% if not session.get("user_id") %}
-  <section class="card">
+  <section class="card landing-card">
     <h2>Your trips, in one place</h2>
     <p>Save destinations and dates for your upcoming holidays.</p>
     <form method="post" action="{{ url_for('login') }}">
@@ -31,35 +31,39 @@
   </section>
   <section aria-labelledby="trips-heading">
     <h2 id="trips-heading">Your trips</h2>
-    {% for trip in trips %}
-    <article class="card trip{% if confirm_delete == trip.id %} is-confirming{% endif %}" id="trip-{{ trip.id }}">
-      <div class="trip-info">
-        <h3><a class="trip-link" href="{{ url_for('trip_detail', trip_id=trip.id) }}">{{ trip.destination }}</a></h3>
-        <p class="trip-dates">{{ trip.start_date }} &ndash; {{ trip.end_date }}</p>
-      </div>
-      {% if confirm_delete == trip.id %}
-      <div class="trip-confirm" role="region" aria-label="Confirm deleting {{ trip.destination }}">
-        <p class="confirm-prompt">Delete <strong>{{ trip.destination }}</strong>? This cannot be undone.</p>
-        <div class="trip-actions">
-          <form method="post" action="{{ url_for('delete_trip', trip_id=trip.id) }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="confirm" value="1">
-            <input type="hidden" name="origin" value="index">
-            <button class="danger" type="submit" aria-label="Confirm delete {{ trip.destination }}">Confirm delete</button>
-          </form>
-          <a class="button-link secondary" href="{{ url_for('index') }}#trip-{{ trip.id }}">Cancel</a>
+    {% if trips %}
+    <div class="trips-grid">
+      {% for trip in trips %}
+      <article class="card trip{% if confirm_delete == trip.id %} is-confirming{% endif %}" id="trip-{{ trip.id }}">
+        <div class="trip-info">
+          <h3><a class="trip-link" href="{{ url_for('trip_detail', trip_id=trip.id) }}">{{ trip.destination }}</a></h3>
+          <p class="trip-dates">{{ trip.start_date }} &ndash; {{ trip.end_date }}</p>
         </div>
-      </div>
-      {% else %}
-      <div class="trip-actions">
-        <a class="button-link secondary" href="{{ url_for('trip_detail', trip_id=trip.id) }}">Open trip</a>
-        <a class="button-link secondary danger-outline" href="{{ url_for('index', confirm_delete=trip.id) }}#trip-{{ trip.id }}" aria-label="Delete {{ trip.destination }}">Delete</a>
-      </div>
-      {% endif %}
-    </article>
+        {% if confirm_delete == trip.id %}
+        <div class="trip-confirm" role="region" aria-label="Confirm deleting {{ trip.destination }}">
+          <p class="confirm-prompt">Delete <strong>{{ trip.destination }}</strong>? This cannot be undone.</p>
+          <div class="trip-actions">
+            <form method="post" action="{{ url_for('delete_trip', trip_id=trip.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="confirm" value="1">
+              <input type="hidden" name="origin" value="index">
+              <button class="danger" type="submit" aria-label="Confirm delete {{ trip.destination }}">Confirm delete</button>
+            </form>
+            <a class="button-link secondary" href="{{ url_for('index') }}#trip-{{ trip.id }}">Cancel</a>
+          </div>
+        </div>
+        {% else %}
+        <div class="trip-actions">
+          <a class="button-link secondary" href="{{ url_for('trip_detail', trip_id=trip.id) }}">Open trip</a>
+          <a class="button-link secondary danger-outline" href="{{ url_for('index', confirm_delete=trip.id) }}#trip-{{ trip.id }}" aria-label="Delete {{ trip.destination }}">Delete</a>
+        </div>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
     {% else %}
-    <p>No trips yet. Add one above to get started.</p>
-    {% endfor %}
+    <p class="empty-state">No trips yet. Add one above to get started.</p>
+    {% endif %}
   </section>
   {% endif %}
 {% endblock %}

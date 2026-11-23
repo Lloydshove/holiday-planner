@@ -16,6 +16,7 @@ csrf = CSRFProtect()
 oauth = OAuth()
 STARTER_CATEGORIES = ("Sight", "Food", "Stay", "Transport", "Activity", "Note")
 IDEA_STATUSES = ("idea", "shortlisted", "scheduled", "archived")
+TRIP_TABS = ("inbox", "capture", "settings")
 IDEA_STATUS_LABELS = {
     "idea": "Idea",
     "shortlisted": "Shortlisted",
@@ -170,6 +171,16 @@ def create_app(test_config=None):
             "destination": form.get("destination", ""),
             "start_date": form.get("start_date", ""),
             "end_date": form.get("end_date", ""),
+        }
+
+    def idea_form_values_from_request(form):
+        return {
+            "title": form.get("title", ""),
+            "category_preset": form.get("category_preset", ""),
+            "category": form.get("category", ""),
+            "url": form.get("url", ""),
+            "maps_url": form.get("maps_url", ""),
+            "notes": form.get("notes", ""),
         }
 
     def get_owned_trip(trip_id):
@@ -376,6 +387,28 @@ def create_app(test_config=None):
         ).fetchone()[0]
         confirm_delete = request.args.get("confirm_delete") == "1"
         edit_idea_id = request.args.get("edit_idea", type=int)
+        raw_tab = request.args.get("tab", "").strip().lower()
+        if confirm_delete:
+            active_tab = "settings"
+        elif edit_idea_id is not None:
+            active_tab = "inbox"
+        elif raw_tab in TRIP_TABS:
+            active_tab = raw_tab
+        else:
+            active_tab = "inbox"
+
+        idea_form = {
+            "title": "",
+            "category_preset": "",
+            "category": "",
+            "url": "",
+            "maps_url": "",
+            "notes": "",
+        }
+        saved_idea_form = session.pop(f"add_idea_form_{trip_id}", None)
+        if isinstance(saved_idea_form, dict):
+            idea_form = {key: str(saved_idea_form.get(key, "")) for key in idea_form}
+
         edit_form = {
             "destination": trip["destination"],
             "start_date": trip["start_date"],
@@ -400,8 +433,10 @@ def create_app(test_config=None):
             status_filter=status_filter,
             category_filter=category_filter,
             has_active_filters=bool(status_filter or category_filter),
+            active_tab=active_tab,
             confirm_delete=confirm_delete,
             edit_idea_id=edit_idea_id,
+            idea_form=idea_form,
             edit_form=edit_form,
             end_date_min=end_date_min,
         )
@@ -410,11 +445,24 @@ def create_app(test_config=None):
     @login_required
     def add_idea(trip_id):
         get_owned_trip(trip_id)
+        raw_tab = request.form.get("tab", "").strip().lower()
+        target_tab = raw_tab if raw_tab in ("inbox", "capture") else "inbox"
+        filter_status, filter_category = trip_filter_params()
         existing_categories = get_trip_categories(trip_id, session["user_id"])
         validated, error = validate_idea_form(request.form, existing_categories)
         if error is not None:
+            session[f"add_idea_form_{trip_id}"] = idea_form_values_from_request(request.form)
             flash(error, "error")
-            return redirect(url_for("trip_detail", trip_id=trip_id))
+            return redirect(
+                url_for(
+                    "trip_detail",
+                    trip_id=trip_id,
+                    tab=target_tab,
+                    status=filter_status if target_tab == "inbox" else None,
+                    category=filter_category if target_tab == "inbox" else None,
+                )
+            )
+        session.pop(f"add_idea_form_{trip_id}", None)
         title, category, url, maps_url, notes = validated
         created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         database().execute(
@@ -424,7 +472,7 @@ def create_app(test_config=None):
         )
         database().commit()
         flash("Idea added.", "success")
-        return redirect(url_for("trip_detail", trip_id=trip_id))
+        return redirect(url_for("trip_detail", trip_id=trip_id, tab=target_tab))
 
     @app.post("/trips/<int:trip_id>/ideas/<int:idea_id>/status")
     @login_required
@@ -435,7 +483,7 @@ def create_app(test_config=None):
         if new_status not in IDEA_STATUSES:
             flash("Choose a valid status: idea, shortlisted, scheduled, or archived.", "error")
             return redirect(
-                url_for("trip_detail", trip_id=trip_id, status=filter_status, category=filter_category)
+                url_for("trip_detail", trip_id=trip_id, tab="inbox", status=filter_status, category=filter_category)
             )
         database().execute(
             "UPDATE ideas SET status = ? WHERE id = ? AND trip_id = ? AND owner_id = ?",
@@ -444,7 +492,7 @@ def create_app(test_config=None):
         database().commit()
         flash(f"Idea marked as {IDEA_STATUS_LABELS[new_status]}.", "success")
         return redirect(
-            url_for("trip_detail", trip_id=trip_id, status=filter_status, category=filter_category)
+            url_for("trip_detail", trip_id=trip_id, tab="inbox", status=filter_status, category=filter_category)
         )
 
     @app.post("/trips/<int:trip_id>/ideas/<int:idea_id>/edit")
@@ -460,6 +508,7 @@ def create_app(test_config=None):
                 url_for(
                     "trip_detail",
                     trip_id=trip_id,
+                    tab="inbox",
                     edit_idea=idea_id,
                     status=filter_status,
                     category=filter_category,
@@ -474,6 +523,7 @@ def create_app(test_config=None):
                     url_for(
                         "trip_detail",
                         trip_id=trip_id,
+                        tab="inbox",
                         edit_idea=idea_id,
                         status=filter_status,
                         category=filter_category,
@@ -492,7 +542,7 @@ def create_app(test_config=None):
         database().commit()
         flash("Idea updated.", "success")
         return redirect(
-            url_for("trip_detail", trip_id=trip_id, status=filter_status, category=filter_category)
+            url_for("trip_detail", trip_id=trip_id, tab="inbox", status=filter_status, category=filter_category)
             + f"#idea-{idea_id}"
         )
 
@@ -510,7 +560,7 @@ def create_app(test_config=None):
             abort(404)
         flash("Idea deleted.", "success")
         return redirect(
-            url_for("trip_detail", trip_id=trip_id, status=filter_status, category=filter_category)
+            url_for("trip_detail", trip_id=trip_id, tab="inbox", status=filter_status, category=filter_category)
         )
 
     @app.post("/trips/<int:trip_id>/edit")
@@ -521,7 +571,7 @@ def create_app(test_config=None):
         if validated is None:
             session[f"edit_trip_form_{trip_id}"] = form_values_from_request(request.form)
             flash("Enter a destination and valid dates, with the end date on or after the start date.", "error")
-            return redirect(url_for("trip_detail", trip_id=trip_id))
+            return redirect(url_for("trip_detail", trip_id=trip_id, tab="settings"))
         session.pop(f"edit_trip_form_{trip_id}", None)
         destination, start, end = validated
         database().execute(
@@ -531,13 +581,13 @@ def create_app(test_config=None):
         )
         database().commit()
         flash("Trip updated.", "success")
-        return redirect(url_for("trip_detail", trip_id=trip_id))
+        return redirect(url_for("trip_detail", trip_id=trip_id, tab="settings"))
 
     @app.get("/trips/<int:trip_id>/delete")
     @login_required
     def confirm_delete_trip(trip_id):
         get_owned_trip(trip_id)
-        return redirect(url_for("trip_detail", trip_id=trip_id, confirm_delete=1) + "#delete-trip")
+        return redirect(url_for("trip_detail", trip_id=trip_id, tab="settings", confirm_delete=1) + "#delete-trip")
 
     @app.post("/trips/<int:trip_id>/delete")
     @login_required
@@ -547,7 +597,7 @@ def create_app(test_config=None):
             flash("Confirm deletion before removing this trip.", "error")
             if request.form.get("origin") == "index":
                 return redirect(url_for("index", confirm_delete=trip_id) + f"#trip-{trip_id}")
-            return redirect(url_for("trip_detail", trip_id=trip_id, confirm_delete=1) + "#delete-trip")
+            return redirect(url_for("trip_detail", trip_id=trip_id, tab="settings", confirm_delete=1) + "#delete-trip")
         result = database().execute(
             "DELETE FROM trips WHERE id = ? AND owner_id = ?", (trip_id, session["user_id"])
         )

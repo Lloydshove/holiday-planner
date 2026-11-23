@@ -64,9 +64,14 @@ def test_trip_workspace_displays_details_edit_form_and_navigation(client):
     assert b"Kyoto" in response.data
     assert b"2027-04-01" in response.data
     assert b"2027-04-10" in response.data
-    assert b'action="/trips/1/edit"' in response.data
     assert b'href="/"' in response.data
-    assert b"/trips/1?confirm_delete=1" in response.data
+    assert b'aria-label="Trip sections"' in response.data
+    assert b'action="/trips/1/edit"' not in response.data
+
+    settings_page = client.get("/trips/1?tab=settings")
+    assert settings_page.status_code == 200
+    assert b'action="/trips/1/edit"' in settings_page.data
+    assert b"/trips/1?tab=settings&amp;confirm_delete=1" in settings_page.data
     assert client.get("/trips/999").status_code == 404
 
 
@@ -81,9 +86,9 @@ def test_trip_edit_persists_and_escapes_html(app, client):
         "end_date": "2027-05-12",
     }, follow_redirects=False)
     assert response.status_code == 302
-    assert response.location.endswith("/trips/1")
+    assert response.location.endswith("/trips/1?tab=settings")
 
-    page = client.get("/trips/1")
+    page = client.get("/trips/1?tab=settings")
     assert b"Trip updated." in page.data
     assert b"<script>" not in page.data
     assert b"&lt;script&gt;" in page.data
@@ -367,7 +372,7 @@ def test_invalid_edit_trip_preserves_entered_values_once(app, client):
     assert b'min="2027-04-15"' in response.data
 
     # Stored trip remains unchanged and next GET shows stored values
-    fresh = client.get("/trips/1")
+    fresh = client.get("/trips/1?tab=settings")
     assert b'value="Kyoto"' in fresh.data
     assert b'value="2027-04-01"' in fresh.data
     assert b'min="2027-04-01"' in fresh.data
@@ -382,7 +387,7 @@ def test_date_chooser_constraints_and_script_are_rendered(client):
     client.post("/trips", data={
         "destination": "Kyoto", "start_date": "2027-04-01", "end_date": "2027-04-10"
     })
-    trip_page = client.get("/trips/1")
+    trip_page = client.get("/trips/1?tab=settings")
     assert b"/static/trip-dates.js" in trip_page.data
     assert b'name="end_date" value="2027-04-10" min="2027-04-01"' in trip_page.data
 
@@ -817,3 +822,183 @@ def test_idea_maps_url_edit_clearing_and_legacy_db_migration(tmp_path):
     assert b"Open in Google Maps" not in cleared.data
     with sqlite3.connect(db_path) as db:
         assert db.execute("SELECT maps_url FROM ideas WHERE id = 1").fetchone() == ("",)
+
+
+def test_trip_segmented_tabs_render_active_state_and_isolate_sections(client):
+    sign_in(client, 1)
+    client.post("/trips", data={
+        "destination": "Kyoto", "start_date": "2027-04-01", "end_date": "2027-04-10"
+    })
+    client.post("/trips/1/ideas", data={"title": "Philosopher's Path", "category_preset": "Sight"})
+
+    # Default (inbox) view renders segmented nav, desktop 2-pane layout (capture + inbox), and hides settings
+    inbox_page = client.get("/trips/1")
+    assert inbox_page.status_code == 200
+    assert b'aria-label="Trip sections"' in inbox_page.data
+    assert b'class="segment-link is-active" href="/trips/1?tab=inbox" aria-current="page"' in inbox_page.data
+    assert b'<span class="segment-count">1</span>' in inbox_page.data
+    assert b'class="trip-workspace-grid"' in inbox_page.data
+    assert b'id="capture-idea"' in inbox_page.data
+    assert b'id="ideas"' in inbox_page.data
+    assert b'<input type="hidden" name="tab" value="inbox">' in inbox_page.data
+    assert b'id="edit-trip-heading"' not in inbox_page.data
+    assert b'id="delete-trip"' not in inbox_page.data
+
+    # Invalid tab falls back to inbox safely
+    fallback_page = client.get("/trips/1?tab=unknown")
+    assert b'class="segment-link is-active" href="/trips/1?tab=inbox" aria-current="page"' in fallback_page.data
+    assert b'id="ideas"' in fallback_page.data
+
+    # Capture tab isolates Quick Capture cleanly
+    capture_page = client.get("/trips/1?tab=capture")
+    assert capture_page.status_code == 200
+    assert b'class="segment-link is-active" href="/trips/1?tab=capture" aria-current="page"' in capture_page.data
+    assert b'id="capture-idea"' in capture_page.data
+    assert b'<input type="hidden" name="tab" value="capture">' in capture_page.data
+    assert b'id="ideas"' not in capture_page.data
+    assert b'id="edit-trip-heading"' not in capture_page.data
+
+    # Settings tab isolates Edit trip and Delete trip cleanly
+    settings_page = client.get("/trips/1?tab=settings")
+    assert settings_page.status_code == 200
+    assert b'class="segment-link is-active" href="/trips/1?tab=settings" aria-current="page"' in settings_page.data
+    assert b'id="edit-trip-heading"' in settings_page.data
+    assert b'id="delete-trip"' in settings_page.data
+    assert b'id="capture-idea"' not in settings_page.data
+    assert b'id="ideas"' not in settings_page.data
+
+
+def test_tab_context_preserved_across_actions_filters_and_validation_errors(client):
+    sign_in(client, 1)
+    client.post("/trips", data={
+        "destination": "Osaka", "start_date": "2027-05-01", "end_date": "2027-05-08"
+    })
+
+    # Submitting Quick Capture from tab=capture preserves capture tab on error and success
+    bad_capture = client.post("/trips/1/ideas", data={
+        "tab": "capture",
+        "title": "Kuromon Market",
+        "category_preset": "__custom__",
+        "category": "",
+        "url": "https://example.com/kuromon",
+        "notes": "Morning snacks",
+    }, follow_redirects=False)
+    assert bad_capture.status_code == 302
+    assert "/trips/1?tab=capture" in bad_capture.location
+
+    err_capture_page = client.get(bad_capture.location)
+    assert b'role="alert"' in err_capture_page.data
+    assert b'aria-current="page"' in err_capture_page.data
+    assert b'href="/trips/1?tab=capture" aria-current="page"' in err_capture_page.data
+    assert b'value="Kuromon Market"' in err_capture_page.data
+    assert b'value="https://example.com/kuromon"' in err_capture_page.data
+    assert b"Morning snacks" in err_capture_page.data
+
+    ok_capture = client.post("/trips/1/ideas", data={
+        "tab": "capture",
+        "title": "Kuromon Market",
+        "category_preset": "Food",
+    }, follow_redirects=False)
+    assert ok_capture.status_code == 302
+    assert "/trips/1?tab=capture" in ok_capture.location
+
+    # Submitting Quick Capture from tab=inbox preserves inbox tab
+    ok_inbox = client.post("/trips/1/ideas", data={
+        "tab": "inbox",
+        "title": "Osaka Castle",
+        "category_preset": "Sight",
+    }, follow_redirects=False)
+    assert ok_inbox.status_code == 302
+    assert "/trips/1?tab=inbox" in ok_inbox.location
+
+    # Idea status triage, edit, and delete preserve tab=inbox and active filters
+    triage_res = client.post("/trips/1/ideas/1/status", data={
+        "status": "shortlisted",
+        "filter_status": "idea",
+        "filter_category": "Food",
+    }, follow_redirects=False)
+    assert triage_res.status_code == 302
+    assert "tab=inbox" in triage_res.location
+    assert "status=idea" in triage_res.location
+    assert "category=Food" in triage_res.location
+
+    bad_edit_idea = client.post("/trips/1/ideas/1/edit", data={
+        "title": "",
+        "category_preset": "Food",
+        "filter_status": "shortlisted",
+        "filter_category": "Food",
+    }, follow_redirects=False)
+    assert bad_edit_idea.status_code == 302
+    assert "tab=inbox" in bad_edit_idea.location
+    assert "edit_idea=1" in bad_edit_idea.location
+    assert "status=shortlisted" in bad_edit_idea.location
+
+    ok_edit_idea = client.post("/trips/1/ideas/1/edit", data={
+        "title": "Kuromon Market Updated",
+        "category_preset": "Food",
+        "status": "shortlisted",
+        "filter_status": "shortlisted",
+    }, follow_redirects=False)
+    assert ok_edit_idea.status_code == 302
+    assert "tab=inbox" in ok_edit_idea.location
+    assert "status=shortlisted" in ok_edit_idea.location
+
+    del_idea = client.post("/trips/1/ideas/1/delete", data={
+        "filter_status": "shortlisted",
+    }, follow_redirects=False)
+    assert del_idea.status_code == 302
+    assert "tab=inbox" in del_idea.location
+    assert "status=shortlisted" in del_idea.location
+
+    # Invalid trip edit, GET delete confirmation, and unconfirmed POST delete stay on tab=settings
+    bad_trip_edit = client.post("/trips/1/edit", data={
+        "destination": "",
+        "start_date": "2027-05-01",
+        "end_date": "2027-05-08",
+    }, follow_redirects=False)
+    assert bad_trip_edit.status_code == 302
+    assert bad_trip_edit.location.endswith("/trips/1?tab=settings")
+
+    confirm_get = client.get("/trips/1/delete", follow_redirects=False)
+    assert confirm_get.status_code == 302
+    assert "tab=settings" in confirm_get.location
+    assert "confirm_delete=1" in confirm_get.location
+
+    unconfirmed_del = client.post("/trips/1/delete", data={}, follow_redirects=False)
+    assert unconfirmed_del.status_code == 302
+    assert "tab=settings" in unconfirmed_del.location
+    assert "confirm_delete=1" in unconfirmed_del.location
+
+    # Direct ?confirm_delete=1 automatically activates settings tab
+    direct_confirm = client.get("/trips/1?confirm_delete=1")
+    assert b'href="/trips/1?tab=settings" aria-current="page"' in direct_confirm.data
+    assert b"Are you sure you want to permanently delete" in direct_confirm.data
+
+
+def test_responsive_assets_and_progressive_category_picker_are_served(client):
+    sign_in(client, 1)
+    client.post("/trips", data={
+        "destination": "Lisbon", "start_date": "2027-01-01", "end_date": "2027-01-05"
+    })
+    index_page = client.get("/")
+    assert b"/static/category-picker.js" in index_page.data
+    assert b'class="trips-grid"' in index_page.data
+
+    trip_page = client.get("/trips/1")
+    assert b"/static/category-picker.js" in trip_page.data
+    assert b"data-category-picker" in trip_page.data
+    assert b"data-custom-category-field" in trip_page.data
+
+    picker_js = client.get("/static/category-picker.js")
+    assert picker_js.status_code == 200
+    assert b"__custom__" in picker_js.data
+    assert b"customField.hidden" in picker_js.data
+
+    css_res = client.get("/static/style.css")
+    assert css_res.status_code == 200
+    assert b"max-width: 1200px" in css_res.data
+    assert b"@media (max-width: 1024px)" in css_res.data
+    assert b"@media (max-width: 640px)" in css_res.data
+    assert b".segmented-nav" in css_res.data
+    assert b".trip-workspace-grid" in css_res.data
+    assert b"min-height: 44px" in css_res.data
