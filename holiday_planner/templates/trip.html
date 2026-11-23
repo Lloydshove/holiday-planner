@@ -14,6 +14,68 @@
     <p class="trip-dates">{{ trip.start_date }} &ndash; {{ trip.end_date }}</p>
   </section>
 
+  <section class="card quick-capture" id="capture-idea" aria-labelledby="capture-idea-heading">
+    <h2 id="capture-idea-heading">Quick-capture idea</h2>
+    <form method="post" action="{{ url_for('add_idea', trip_id=trip.id) }}" class="idea-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field field-idea-title">
+        <label for="idea-title">Idea</label>
+        <input id="idea-title" name="title" maxlength="160" required placeholder="e.g. Sunset viewpoint, ramen spot, boutique hotel">
+      </div>
+      <div class="field">
+        <label for="idea-category-preset">Category</label>
+        <select id="idea-category-preset" name="category_preset">
+          <option value="">Choose a category…</option>
+          {% for category in categories %}
+          <option value="{{ category }}">{{ category }}</option>
+          {% endfor %}
+          <option value="__custom__">Custom category…</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="idea-category-custom">Custom category (optional)</label>
+        <input id="idea-category-custom" name="category" maxlength="40" placeholder="Or type a custom category">
+      </div>
+      <div class="field field-idea-url">
+        <label for="idea-url">Link (optional)</label>
+        <input id="idea-url" type="url" name="url" maxlength="500" placeholder="https://example.com">
+      </div>
+      <div class="field field-idea-notes">
+        <label for="idea-notes">Notes (optional)</label>
+        <textarea id="idea-notes" name="notes" maxlength="2000" rows="2" placeholder="Neighborhood, timing, or why to check it out"></textarea>
+      </div>
+      <div class="idea-form-actions">
+        <button type="submit" class="form-submit">Save idea</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="ideas-section" id="ideas" aria-labelledby="ideas-heading">
+    <h2 id="ideas-heading">Idea inbox ({{ ideas|length }})</h2>
+    {% if ideas %}
+    <div class="ideas-grid">
+      {% for idea in ideas %}
+      <article class="card idea-card" id="idea-{{ idea.id }}">
+        <div class="idea-header">
+          <h3 class="idea-title">{{ idea.title }}</h3>
+          <span class="category-badge">{{ idea.category }}</span>
+        </div>
+        {% if idea.url and is_safe_http_url(idea.url) %}
+        <p class="idea-link-row">
+          <a class="idea-link" href="{{ idea.url }}" target="_blank" rel="noopener noreferrer">{{ idea.url }}</a>
+        </p>
+        {% endif %}
+        {% if idea.notes %}
+        <p class="idea-notes">{{ idea.notes }}</p>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No ideas yet. Capture your first spot, meal, or stay above.</p>
+    {% endif %}
+  </section>
+
   <section class="card" aria-labelledby="edit-trip-heading">
     <h2 id="edit-trip-heading">Edit trip</h2>
     <form method="post" action="{{ url_for('edit_trip', trip_id=trip.id) }}" class="trip-form" data-trip-date-form>

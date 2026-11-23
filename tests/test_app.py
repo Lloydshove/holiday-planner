@@ -147,24 +147,139 @@ def test_two_step_delete_confirmation_from_index_and_workspace(app, client):
         assert db.execute("SELECT COUNT(*) FROM trips").fetchone()[0] == 0
 
 
-def test_trip_deletion_cascades_to_foreign_key_children(app, client):
-    with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
-        db.execute(
-            "CREATE TABLE ideas ("
-            "id INTEGER PRIMARY KEY, "
-            "trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE, "
-            "title TEXT NOT NULL)"
-        )
+def test_trip_deletion_cascades_to_ideas(app, client):
     sign_in(client, 1)
     client.post("/trips", data={
         "destination": "Rome", "start_date": "2027-07-01", "end_date": "2027-07-07"
     })
+    client.post("/trips/1/ideas", data={
+        "title": "Colosseum",
+        "category_preset": "Sight",
+    })
     with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
-        db.execute("INSERT INTO ideas (trip_id, title) VALUES (1, 'Colosseum')")
-        db.commit()
+        assert db.execute("SELECT COUNT(*) FROM ideas WHERE trip_id = 1").fetchone()[0] == 1
     assert client.post("/trips/1/delete", data={"confirm": "1"}).status_code == 302
     with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
         assert db.execute("SELECT COUNT(*) FROM ideas").fetchone()[0] == 0
+
+
+def test_idea_quick_capture_starter_and_custom_categories_and_escaping(app, client):
+    sign_in(client, 1)
+    client.post("/trips", data={
+        "destination": "Tokyo", "start_date": "2027-09-01", "end_date": "2027-09-10"
+    })
+
+    page = client.get("/trips/1")
+    assert page.status_code == 200
+    assert b'action="/trips/1/ideas"' in page.data
+    for field_id in (b'for="idea-title"', b'for="idea-category-preset"', b'for="idea-category-custom"', b'for="idea-url"', b'for="idea-notes"'):
+        assert field_id in page.data
+    for starter in (b"Sight", b"Food", b"Stay", b"Transport", b"Activity", b"Note"):
+        assert starter in page.data
+
+    res = client.post("/trips/1/ideas", data={
+        "title": "  Omoide Yokocho  ",
+        "category_preset": "Food",
+        "url": "https://example.com/ramen",
+        "notes": "  Go before 7pm  ",
+    }, follow_redirects=True)
+    assert res.status_code == 200
+    assert b"Idea added." in res.data
+    assert b'role="status"' in res.data
+    assert b"Omoide Yokocho" in res.data
+    assert b'href="https://example.com/ramen"' in res.data
+    assert b'rel="noopener noreferrer"' in res.data
+    assert b"Go before 7pm" in res.data
+
+    # Custom category with duplicate whitespace, then case/whitespace variant + starter case variant
+    client.post("/trips/1/ideas", data={
+        "title": "Yanaka Ginza",
+        "category_preset": "__custom__",
+        "category": "  Street   Food  ",
+    })
+    client.post("/trips/1/ideas", data={
+        "title": "Ameyoko Market",
+        "category": "street   food",
+    })
+    client.post("/trips/1/ideas", data={
+        "title": "Meiji Shrine",
+        "category": "  SIGHT  ",
+    })
+    xss_page = client.post("/trips/1/ideas", data={
+        "title": "<script>alert('title')</script>",
+        "category": "<script>cat</script>",
+        "notes": "<script>note</script>",
+    }, follow_redirects=True)
+    assert b"<script>" not in xss_page.data
+    assert b"&lt;script&gt;alert(&#39;title&#39;)&lt;/script&gt;" in xss_page.data
+    assert b"&lt;script&gt;cat&lt;/script&gt;" in xss_page.data
+
+    with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
+        rows = db.execute(
+            "SELECT trip_id, owner_id, title, category, url, notes, status, created_at "
+            "FROM ideas ORDER BY id"
+        ).fetchall()
+    assert len(rows) == 5
+    assert rows[0][:7] == (1, 1, "Omoide Yokocho", "Food", "https://example.com/ramen", "Go before 7pm", "idea")
+    assert rows[0][7]
+    assert rows[1][3] == "Street Food"
+    assert rows[2][3] == "Street Food"
+    assert rows[3][3] == "Sight"
+
+
+@pytest.mark.parametrize("payload", [
+    {"title": "", "category": "Food"},
+    {"title": "   ", "category": "Food"},
+    {"title": "x" * 161, "category": "Food"},
+    {"title": "Valid", "category": ""},
+    {"title": "Valid", "category": "   "},
+    {"title": "Valid", "category_preset": "__custom__", "category": "   "},
+    {"title": "Valid", "category": "c" * 41},
+    {"title": "Valid", "category": "Sight", "url": "javascript:alert(1)"},
+    {"title": "Valid", "category": "Sight", "url": "data:text/html,<script>alert(1)</script>"},
+    {"title": "Valid", "category": "Sight", "url": "ftp://example.com/map"},
+    {"title": "Valid", "category": "Sight", "url": "https://"},
+    {"title": "Valid", "category": "Sight", "url": "https://example.com/\nnewline"},
+    {"title": "Valid", "category": "Sight", "url": "https://example.com/" + "a" * 490},
+    {"title": "Valid", "category": "Sight", "notes": "n" * 2001},
+])
+def test_invalid_ideas_are_rejected_without_saving(app, client, payload):
+    sign_in(client, 1)
+    client.post("/trips", data={
+        "destination": "Lisbon", "start_date": "2027-01-01", "end_date": "2027-01-05"
+    })
+    res = client.post("/trips/1/ideas", data=payload, follow_redirects=True)
+    assert b"Idea added." not in res.data
+    assert b'role="alert"' in res.data
+    with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
+        assert db.execute("SELECT COUNT(*) FROM ideas").fetchone()[0] == 0
+
+
+def test_ideas_enforce_cross_user_isolation_and_safe_link_rendering(app, client):
+    sign_in(client, 1)
+    client.post("/trips", data={
+        "destination": "Lisbon", "start_date": "2027-01-01", "end_date": "2027-01-05"
+    })
+    # Defense in depth: even a tampered non-http(s) DB URL is never rendered as an anchor
+    with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
+        db.execute(
+            "INSERT INTO ideas (trip_id, owner_id, title, category, url, notes, status, created_at) "
+            "VALUES (1, 1, 'Tampered', 'Note', 'javascript:alert(1)', '', 'idea', '2027-01-01T00:00:00Z')"
+        )
+        db.commit()
+    page = client.get("/trips/1")
+    assert b"Tampered" in page.data
+    assert b'href="javascript:' not in page.data
+
+    sign_in(client, 2)
+    assert client.post("/trips/1/ideas", data={
+        "title": "Hijacked idea", "category": "Food"
+    }).status_code == 404
+    assert client.post("/trips/999/ideas", data={
+        "title": "Missing trip", "category": "Food"
+    }).status_code == 404
+    with sqlite3.connect(app.config["DATABASE_PATH"]) as db:
+        assert db.execute("SELECT COUNT(*) FROM ideas").fetchone()[0] == 1
 
 
 @pytest.mark.parametrize("destination,start,end", [
@@ -255,6 +370,7 @@ def test_date_chooser_constraints_and_script_are_rendered(client):
 def test_login_is_required(client):
     assert client.post("/trips").status_code == 302
     assert client.get("/trips/1").status_code == 302
+    assert client.post("/trips/1/ideas").status_code == 302
     assert client.post("/trips/1/edit").status_code == 302
     assert client.get("/trips/1/delete").status_code == 302
     assert client.post("/trips/1/delete").status_code == 302
@@ -281,6 +397,7 @@ def test_csrf_protects_mutations(app):
     client = app.test_client()
     sign_in(client, 1)
     assert client.post("/trips", data={}).status_code == 400
+    assert client.post("/trips/1/ideas", data={}).status_code == 400
     assert client.post("/trips/1/edit", data={}).status_code == 400
     assert client.post("/trips/1/delete", data={"confirm": "1"}).status_code == 400
     assert client.post("/auth/logout").status_code == 400
@@ -295,6 +412,12 @@ def test_csrf_protects_mutations(app):
     })
     workspace_page = client.get("/trips/1")
     token = re.search(rb'name="csrf_token" value="([^"]+)"', workspace_page.data).group(1).decode()
+    idea_res = client.post("/trips/1/ideas", data={
+        "csrf_token": token,
+        "title": "Belvedere Palace",
+        "category_preset": "Sight",
+    })
+    assert idea_res.status_code == 302
     edit_res = client.post("/trips/1/edit", data={
         "csrf_token": token,
         "destination": "Salzburg",

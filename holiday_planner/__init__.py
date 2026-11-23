@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from datetime import date
+from datetime import date, datetime, timezone
 from functools import wraps
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -14,6 +14,18 @@ from werkzeug.exceptions import BadGateway
 
 csrf = CSRFProtect()
 oauth = OAuth()
+STARTER_CATEGORIES = ("Sight", "Food", "Stay", "Transport", "Activity", "Note")
+MAX_IDEA_TITLE_LEN = 160
+MAX_IDEA_CATEGORY_LEN = 40
+MAX_IDEA_URL_LEN = 500
+MAX_IDEA_NOTES_LEN = 2000
+
+
+def is_safe_http_url(value):
+    if not value or any(ch.isspace() or ord(ch) < 32 for ch in value):
+        return False
+    parsed = urlsplit(value)
+    return parsed.scheme.lower() in ("http", "https") and bool(parsed.hostname)
 
 
 def create_app(test_config=None):
@@ -84,7 +96,25 @@ def create_app(test_config=None):
                 end_date TEXT NOT NULL
             )"""
         )
+        database().execute(
+            """CREATE TABLE IF NOT EXISTS ideas (
+                id INTEGER PRIMARY KEY,
+                trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+                owner_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                category TEXT NOT NULL,
+                url TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'idea',
+                created_at TEXT NOT NULL
+            )"""
+        )
+        database().execute(
+            "CREATE INDEX IF NOT EXISTS idx_ideas_trip_owner ON ideas (trip_id, owner_id, id)"
+        )
         database().commit()
+
+    app.jinja_env.globals["is_safe_http_url"] = is_safe_http_url
 
     def login_required(view):
         @wraps(view)
@@ -129,6 +159,61 @@ def create_app(test_config=None):
         if trip is None:
             abort(404)
         return trip
+
+    def get_trip_categories(trip_id, owner_id):
+        rows = database().execute(
+            "SELECT DISTINCT category FROM ideas WHERE trip_id = ? AND owner_id = ? ORDER BY id",
+            (trip_id, owner_id),
+        ).fetchall()
+        categories = list(STARTER_CATEGORIES)
+        seen = {category.casefold() for category in categories}
+        for row in rows:
+            category = row["category"]
+            if category.casefold() not in seen:
+                categories.append(category)
+                seen.add(category.casefold())
+        return categories
+
+    def normalize_idea_category(raw_category, existing_categories):
+        cleaned = " ".join(raw_category.split())
+        if not cleaned or len(cleaned) > MAX_IDEA_CATEGORY_LEN:
+            return None
+        lowered = cleaned.casefold()
+        for candidate in (*STARTER_CATEGORIES, *existing_categories):
+            if candidate.casefold() == lowered:
+                return candidate
+        return cleaned
+
+    def validate_idea_form(form, existing_categories):
+        title = form.get("title", "").strip()
+        if not title or len(title) > MAX_IDEA_TITLE_LEN:
+            return None, "Enter an idea title (up to 160 characters)."
+
+        raw_custom = form.get("category", "")
+        raw_preset = form.get("category_preset", "")
+        if raw_preset == "__custom__":
+            raw_category = raw_custom
+        elif raw_custom.strip():
+            raw_category = raw_custom
+        else:
+            raw_category = raw_preset
+
+        category = normalize_idea_category(raw_category, existing_categories)
+        if category is None:
+            return None, "Choose a category or enter a custom one (up to 40 characters)."
+
+        url = form.get("url", "").strip()
+        if url:
+            if len(url) > MAX_IDEA_URL_LEN:
+                return None, "URL must be 500 characters or fewer."
+            if not is_safe_http_url(url):
+                return None, "URL must start with http:// or https://."
+
+        notes = form.get("notes", "").replace("\r\n", "\n").strip()
+        if len(notes) > MAX_IDEA_NOTES_LEN:
+            return None, "Notes must be 2000 characters or fewer."
+
+        return (title, category, url, notes), None
 
     @app.get("/")
     def index():
@@ -206,6 +291,12 @@ def create_app(test_config=None):
     @login_required
     def trip_detail(trip_id):
         trip = get_owned_trip(trip_id)
+        ideas = database().execute(
+            "SELECT id, title, category, url, notes, status, created_at FROM ideas "
+            "WHERE trip_id = ? AND owner_id = ? ORDER BY id DESC",
+            (trip_id, session["user_id"]),
+        ).fetchall()
+        categories = get_trip_categories(trip_id, session["user_id"])
         confirm_delete = request.args.get("confirm_delete") == "1"
         edit_form = {
             "destination": trip["destination"],
@@ -223,10 +314,32 @@ def create_app(test_config=None):
         return render_template(
             "trip.html",
             trip=trip,
+            ideas=ideas,
+            categories=categories,
             confirm_delete=confirm_delete,
             edit_form=edit_form,
             end_date_min=end_date_min,
         )
+
+    @app.post("/trips/<int:trip_id>/ideas")
+    @login_required
+    def add_idea(trip_id):
+        get_owned_trip(trip_id)
+        existing_categories = get_trip_categories(trip_id, session["user_id"])
+        validated, error = validate_idea_form(request.form, existing_categories)
+        if error is not None:
+            flash(error, "error")
+            return redirect(url_for("trip_detail", trip_id=trip_id))
+        title, category, url, notes = validated
+        created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        database().execute(
+            "INSERT INTO ideas (trip_id, owner_id, title, category, url, notes, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'idea', ?)",
+            (trip_id, session["user_id"], title, category, url, notes, created_at),
+        )
+        database().commit()
+        flash("Idea added.", "success")
+        return redirect(url_for("trip_detail", trip_id=trip_id))
 
     @app.post("/trips/<int:trip_id>/edit")
     @login_required
