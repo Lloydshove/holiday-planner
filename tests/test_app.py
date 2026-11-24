@@ -1,5 +1,8 @@
+import os
+from pathlib import Path
 import re
 import sqlite3
+import subprocess
 from unittest.mock import Mock
 
 from flask import request, url_for
@@ -1220,4 +1223,34 @@ def test_trust_proxy_enables_proxyfix_opt_in(tmp_path, monkeypatch):
         },
     )
     assert trusted_res.data == b"https|planner.example.com|203.0.113.10|https://planner.example.com/auth/callback"
+
+
+def test_run_script_is_executable_valid_and_validates_required_env(tmp_path):
+    repo_root = Path(__file__).resolve().parent.parent
+    script = repo_root / "scripts" / "run.sh"
+    assert script.is_file()
+    assert os.access(script, os.X_OK)
+
+    syntax = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+    assert syntax.returncode == 0, syntax.stderr
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_gunicorn = bin_dir / "gunicorn"
+    fake_gunicorn.write_text("#!/usr/bin/env bash\nexit 0\n")
+    fake_gunicorn.chmod(0o755)
+    fake_python = bin_dir / "python3"
+    fake_python.write_text("#!/usr/bin/env bash\necho dummy-secret\n")
+    fake_python.chmod(0o755)
+
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "GITHUB_CLIENT_ID": "super-secret-id",
+        "GITHUB_CLIENT_SECRET": "",
+    }
+    res = subprocess.run([str(script)], capture_output=True, text=True, env=env)
+    assert res.returncode != 0
+    assert "GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must be set" in res.stderr
+    assert "super-secret-id" not in res.stdout + res.stderr
+
 

@@ -7,27 +7,29 @@ server. This is a starter, not a production-ready public deployment.
 ## Run locally
 
 Requires Python 3.12 or later and a GitHub OAuth app. In GitHub's developer
-settings, create an OAuth app with homepage `http://127.0.0.1:5000` and
-callback URL `http://127.0.0.1:5000/auth/callback`. Do not commit credentials.
+settings, create an OAuth app with homepage `http://127.0.0.1:5001` and
+callback URL `http://127.0.0.1:5001/auth/callback`. Do not commit credentials.
 
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -e '.[test]'
-export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+pip install -e '.[deploy]'
 export GITHUB_CLIENT_ID='your-client-id'
 export GITHUB_CLIENT_SECRET='your-client-secret'
-export OAUTH_REDIRECT_URI='http://127.0.0.1:5000/auth/callback'
-export COOKIE_SECURE=0 # local HTTP only
-export ALLOWED_GITHUB_IDS='353556' # defaults to @Lloydshove (353556); set to your GitHub user ID(s) if testing with another account
-flask --app holiday_planner run
+./scripts/run.sh
 ```
 
-Open <http://127.0.0.1:5000>. The SQLite database is created under Flask's
-instance directory; set `DATABASE_PATH` to an absolute path to choose its
-location. Back up the database (including any SQLite journal/WAL files) using
-SQLite's online backup facilities. Restarting or replacing ephemeral storage
-will otherwise lose data.
+`./scripts/run.sh` defaults to `HOST=127.0.0.1`, `PORT=5001`, `COOKIE_SECURE=0`,
+`TRUST_PROXY=0`, and `ALLOWED_GITHUB_IDS=353556` (`@Lloydshove`), and generates
+an ephemeral `SECRET_KEY` if unset. Open <http://127.0.0.1:5001>.
+
+Alternatively, you can run Flask's dev server directly (for example on port
+`5000` with `OAUTH_REDIRECT_URI='http://127.0.0.1:5000/auth/callback'`,
+`COOKIE_SECURE=0`, and `flask --app holiday_planner run`). The SQLite database is
+created under Flask's instance directory; set `DATABASE_PATH` to an absolute
+path to choose its location. Back up the database (including any SQLite
+journal/WAL files) using SQLite's online backup facilities. Restarting or
+replacing ephemeral storage will otherwise lose data.
 
 ## Run with HTTPS (Caddy + Gunicorn)
 
@@ -43,24 +45,20 @@ In GitHub's developer settings, register your OAuth app with homepage
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e '.[deploy]'
-export PLANNER_DOMAIN='your-domain.example'
 export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
 export GITHUB_CLIENT_ID='your-client-id'
 export GITHUB_CLIENT_SECRET='your-client-secret'
-export OAUTH_REDIRECT_URI="https://${PLANNER_DOMAIN}/auth/callback"
-export COOKIE_SECURE=1
-export TRUST_PROXY=1
 export ALLOWED_GITHUB_IDS=353556 # comma-separated positive integer GitHub user IDs
 export DATABASE_PATH='/var/lib/holiday-planner/holidays.sqlite3'
-gunicorn -w 1 --threads 4 -b 127.0.0.1:5001 'holiday_planner:create_app()'
+PLANNER_DOMAIN=your-domain.example ./scripts/run.sh
 ```
 
-In a separate shell on the same host (with `PLANNER_DOMAIN` exported, and
-optionally `UPSTREAM_ADDR` if not `127.0.0.1:5001`), start Caddy:
-
-```sh
-caddy run --config Caddyfile
-```
+When `PLANNER_DOMAIN` is set, `./scripts/run.sh` automatically exports
+`COOKIE_SECURE=1`, `TRUST_PROXY=1`,
+`OAUTH_REDIRECT_URI="https://${PLANNER_DOMAIN}/auth/callback"`, and
+`UPSTREAM_ADDR="${HOST}:${PORT}"` (default `127.0.0.1:5001`), starts Gunicorn
+(`-w 1 --threads 4`), and runs `caddy run --config Caddyfile` in front of it
+(stopping Gunicorn cleanly when Caddy exits).
 
 `ALLOWED_GITHUB_IDS` defaults to `353556` (`@Lloydshove`) when unset and fails
 closed at startup if set empty or invalid. `TRUST_PROXY=1` enables Werkzeug's
