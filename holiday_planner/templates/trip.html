@@ -1,0 +1,299 @@
+{% extends "base.html" %}
+{% block title %}{{ trip.destination }} — Holiday planner{% endblock %}
+{% block header_title %}
+<p class="eyebrow"><a class="brand-link" href="{{ url_for('index') }}">Holiday planner</a></p>
+<h1>{{ trip.destination }}</h1>
+{% endblock %}
+{% macro quick_capture_section(form_tab, pane_class="") %}
+  <section class="card quick-capture{% if pane_class %} {{ pane_class }}{% endif %}" id="capture-idea" aria-labelledby="capture-idea-heading">
+    <h2 id="capture-idea-heading">Quick-capture idea</h2>
+    <form method="post" action="{{ url_for('add_idea', trip_id=trip.id) }}" class="idea-form" data-category-picker>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="tab" value="{{ form_tab }}">
+      {% if form_tab == 'inbox' %}
+      <input type="hidden" name="filter_status" value="{{ status_filter }}">
+      <input type="hidden" name="filter_category" value="{{ category_filter }}">
+      {% endif %}
+      <div class="field field-idea-title">
+        <label for="idea-title">Idea</label>
+        <input id="idea-title" name="title" maxlength="160" value="{{ idea_form.title }}" required placeholder="e.g. Sunset viewpoint, ramen spot, boutique hotel">
+      </div>
+      <div class="field field-category-preset">
+        <label for="idea-category-preset">Category</label>
+        <select id="idea-category-preset" name="category_preset">
+          <option value="">Choose a category…</option>
+          {% for category in categories %}
+          <option value="{{ category }}"{% if idea_form.category_preset == category %} selected{% endif %}>{{ category }}</option>
+          {% endfor %}
+          <option value="__custom__"{% if idea_form.category_preset == "__custom__" %} selected{% endif %}>Custom category…</option>
+        </select>
+      </div>
+      <div class="field field-category-custom" data-custom-category-field>
+        <label for="idea-category-custom">Custom category (optional)</label>
+        <input id="idea-category-custom" name="category" maxlength="40" value="{{ idea_form.category }}" placeholder="Or type a custom category">
+      </div>
+      <div class="field field-idea-url">
+        <label for="idea-url">Link (optional)</label>
+        <input id="idea-url" type="url" name="url" maxlength="500" value="{{ idea_form.url }}" placeholder="https://example.com">
+      </div>
+      <div class="field field-idea-maps-url">
+        <label for="idea-maps-url">Google Maps link (optional)</label>
+        <input id="idea-maps-url" type="url" name="maps_url" maxlength="500" value="{{ idea_form.maps_url }}" placeholder="https://maps.google.com/...">
+      </div>
+      <div class="field field-idea-notes">
+        <label for="idea-notes">Notes (optional)</label>
+        <textarea id="idea-notes" name="notes" maxlength="2000" rows="2" placeholder="Neighborhood, timing, or why to check it out">{{ idea_form.notes }}</textarea>
+      </div>
+      <div class="idea-form-actions">
+        <button type="submit" class="form-submit">Save idea</button>
+      </div>
+    </form>
+  </section>
+{% endmacro %}
+
+{% block content %}
+  <div class="trip-subbar">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a class="back-link" href="{{ url_for('index') }}">&larr; Back to trips</a>
+    </nav>
+    <p class="trip-dates-badge" aria-label="Trip dates">{{ trip.start_date }} &ndash; {{ trip.end_date }}</p>
+  </div>
+
+  <nav class="segmented-nav" aria-label="Trip sections">
+    <a class="segment-link{% if active_tab == 'inbox' %} is-active{% endif %}" href="{{ url_for('trip_detail', trip_id=trip.id, tab='inbox', status=status_filter or None, category=category_filter or None) }}"{% if active_tab == 'inbox' %} aria-current="page"{% endif %}>
+      <span>Idea Inbox</span>
+      <span class="segment-count">{{ total_ideas_count }}</span>
+    </a>
+    <a class="segment-link segment-link-capture{% if active_tab == 'capture' %} is-active{% endif %}" href="{{ url_for('trip_detail', trip_id=trip.id, tab='capture') }}"{% if active_tab == 'capture' %} aria-current="page"{% endif %}>
+      <span>Quick Capture</span>
+    </a>
+    <a class="segment-link{% if active_tab == 'settings' %} is-active{% endif %}" href="{{ url_for('trip_detail', trip_id=trip.id, tab='settings') }}"{% if active_tab == 'settings' %} aria-current="page"{% endif %}>
+      <span>Trip Settings</span>
+    </a>
+  </nav>
+
+  {% if active_tab == 'inbox' %}
+  <div class="trip-workspace-grid">
+    {{ quick_capture_section('inbox', 'trip-pane-capture') }}
+
+    <section class="ideas-section trip-pane-inbox" id="ideas" aria-labelledby="ideas-heading">
+      <div class="ideas-toolbar">
+        <h2 id="ideas-heading">Idea inbox ({% if has_active_filters %}{{ ideas|length }} of {{ total_ideas_count }}{% else %}{{ ideas|length }}{% endif %})</h2>
+        <form method="get" action="{{ url_for('trip_detail', trip_id=trip.id) }}#ideas" class="filter-form" aria-label="Filter ideas" data-idea-filter-form>
+          <input type="hidden" name="tab" value="inbox">
+          <div class="field">
+            <label for="filter-status">Status</label>
+            <select id="filter-status" name="status">
+              <option value="">All statuses</option>
+              {% for status_value in statuses %}
+              <option value="{{ status_value }}"{% if status_filter == status_value %} selected{% endif %}>{{ status_labels[status_value] }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="filter-category">Category</label>
+            <select id="filter-category" name="category">
+              <option value="">All categories</option>
+              {% for category in categories %}
+              <option value="{{ category }}"{% if category_filter == category %} selected{% endif %}>{{ category }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <a class="button-link secondary filter-clear" href="{{ url_for('trip_detail', trip_id=trip.id) }}#ideas">Clear filters</a>
+        </form>
+        {% if has_active_filters %}
+        <div class="active-filters" role="status">
+          <p class="active-filters-summary">
+            Active filters:
+            {% if status_filter %}<span class="filter-chip">Status: {{ status_labels.get(status_filter, status_filter) }}</span>{% endif %}
+            {% if category_filter %}<span class="filter-chip">Category: {{ category_filter }}</span>{% endif %}
+          </p>
+        </div>
+        {% endif %}
+      </div>
+
+      {% if ideas %}
+      <div class="ideas-grid">
+        {% for idea in ideas %}
+        <article class="card idea-card status-{{ idea.status }}{% if idea.status == 'archived' %} is-archived{% endif %}{% if edit_idea_id == idea.id %} is-editing{% endif %}" id="idea-{{ idea.id }}">
+          <div class="idea-header">
+            <h3 class="idea-title">{{ idea.title }}</h3>
+            <div class="idea-badges">
+              <span class="category-badge">{{ idea.category }}</span>
+              <span class="status-badge status-{{ idea.status }}">{{ status_labels.get(idea.status, idea.status) }}</span>
+            </div>
+          </div>
+
+          {% if edit_idea_id == idea.id %}
+          <form method="post" action="{{ url_for('edit_idea', trip_id=trip.id, idea_id=idea.id) }}" class="idea-edit-form" data-category-picker>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="filter_status" value="{{ status_filter }}">
+            <input type="hidden" name="filter_category" value="{{ category_filter }}">
+            <div class="field field-idea-title">
+              <label for="edit-idea-title-{{ idea.id }}">Idea</label>
+              <input id="edit-idea-title-{{ idea.id }}" name="title" maxlength="160" value="{{ idea.title }}" required>
+            </div>
+            <div class="field field-category-preset">
+              <label for="edit-idea-category-preset-{{ idea.id }}">Category</label>
+              <select id="edit-idea-category-preset-{{ idea.id }}" name="category_preset">
+                {% for category in categories %}
+                <option value="{{ category }}"{% if idea.category == category %} selected{% endif %}>{{ category }}</option>
+                {% endfor %}
+                <option value="__custom__">Custom category…</option>
+              </select>
+            </div>
+            <div class="field field-category-custom" data-custom-category-field>
+              <label for="edit-idea-category-custom-{{ idea.id }}">Custom category (optional)</label>
+              <input id="edit-idea-category-custom-{{ idea.id }}" name="category" maxlength="40" placeholder="Or type a custom category">
+            </div>
+            <div class="field">
+              <label for="edit-idea-status-{{ idea.id }}">Status</label>
+              <select id="edit-idea-status-{{ idea.id }}" name="status">
+                {% for status_value in statuses %}
+                <option value="{{ status_value }}"{% if idea.status == status_value %} selected{% endif %}>{{ status_labels[status_value] }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="field field-idea-url">
+              <label for="edit-idea-url-{{ idea.id }}">Link (optional)</label>
+              <input id="edit-idea-url-{{ idea.id }}" type="url" name="url" maxlength="500" value="{{ idea.url }}" placeholder="https://example.com">
+            </div>
+            <div class="field field-idea-maps-url">
+              <label for="edit-idea-maps-url-{{ idea.id }}">Google Maps link (optional)</label>
+              <input id="edit-idea-maps-url-{{ idea.id }}" type="url" name="maps_url" maxlength="500" value="{{ idea.maps_url }}" placeholder="https://maps.google.com/...">
+            </div>
+            <div class="field field-idea-notes">
+              <label for="edit-idea-notes-{{ idea.id }}">Notes (optional)</label>
+              <textarea id="edit-idea-notes-{{ idea.id }}" name="notes" maxlength="2000" rows="3">{{ idea.notes }}</textarea>
+            </div>
+            <div class="idea-edit-actions">
+              <button type="submit" aria-label="Save changes to {{ idea.title }}">Save changes</button>
+              <a class="button-link secondary" href="{{ url_for('trip_detail', trip_id=trip.id, tab='inbox', status=status_filter or None, category=category_filter or None) }}#idea-{{ idea.id }}" aria-label="Cancel editing {{ idea.title }}">Cancel</a>
+            </div>
+          </form>
+          {% else %}
+          {% if idea.url and is_safe_http_url(idea.url) %}
+          <p class="idea-link-row">
+            <a class="idea-link" href="{{ idea.url }}" target="_blank" rel="noopener noreferrer">{{ idea.url }}</a>
+          </p>
+          {% endif %}
+          {% if idea.maps_url and is_safe_http_url(idea.maps_url) %}
+          <p class="idea-maps-link-row">
+            <a class="idea-maps-link" href="{{ idea.maps_url }}" target="_blank" rel="noopener noreferrer" aria-label="Open {{ idea.title }} in Google Maps">Open in Google Maps</a>
+          </p>
+          {% endif %}
+          {% if idea.notes %}
+          <p class="idea-notes">{{ idea.notes }}</p>
+          {% endif %}
+          <div class="idea-actions">
+            {% if idea.status != 'shortlisted' %}
+            <form method="post" action="{{ url_for('update_idea_status', trip_id=trip.id, idea_id=idea.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="status" value="shortlisted">
+              <input type="hidden" name="filter_status" value="{{ status_filter }}">
+              <input type="hidden" name="filter_category" value="{{ category_filter }}">
+              <button type="submit" class="secondary action-btn" aria-label="Shortlist {{ idea.title }}">Shortlist</button>
+            </form>
+            {% endif %}
+            {% if idea.status != 'scheduled' %}
+            <form method="post" action="{{ url_for('update_idea_status', trip_id=trip.id, idea_id=idea.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="status" value="scheduled">
+              <input type="hidden" name="filter_status" value="{{ status_filter }}">
+              <input type="hidden" name="filter_category" value="{{ category_filter }}">
+              <button type="submit" class="secondary action-btn" aria-label="Schedule {{ idea.title }}">Schedule</button>
+            </form>
+            {% endif %}
+            {% if idea.status != 'idea' %}
+            <form method="post" action="{{ url_for('update_idea_status', trip_id=trip.id, idea_id=idea.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="status" value="idea">
+              <input type="hidden" name="filter_status" value="{{ status_filter }}">
+              <input type="hidden" name="filter_category" value="{{ category_filter }}">
+              <button type="submit" class="secondary action-btn" aria-label="Move {{ idea.title }} to idea">Move to idea</button>
+            </form>
+            {% endif %}
+            {% if idea.status != 'archived' %}
+            <form method="post" action="{{ url_for('update_idea_status', trip_id=trip.id, idea_id=idea.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="status" value="archived">
+              <input type="hidden" name="filter_status" value="{{ status_filter }}">
+              <input type="hidden" name="filter_category" value="{{ category_filter }}">
+              <button type="submit" class="secondary action-btn" aria-label="Archive {{ idea.title }}">Archive</button>
+            </form>
+            {% endif %}
+            <a class="button-link secondary action-btn" href="{{ url_for('trip_detail', trip_id=trip.id, tab='inbox', edit_idea=idea.id, status=status_filter or None, category=category_filter or None) }}#idea-{{ idea.id }}" aria-label="Edit {{ idea.title }}">Edit</a>
+            <details class="delete-confirm">
+              <summary class="button-link secondary danger-outline action-btn" aria-label="Delete {{ idea.title }}">Delete</summary>
+              <div class="idea-delete-prompt" role="region" aria-label="Confirm deleting {{ idea.title }}">
+                <p class="confirm-prompt">Delete <strong>{{ idea.title }}</strong>? This cannot be undone.</p>
+                <form method="post" action="{{ url_for('delete_idea', trip_id=trip.id, idea_id=idea.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="filter_status" value="{{ status_filter }}">
+                  <input type="hidden" name="filter_category" value="{{ category_filter }}">
+                  <button class="danger action-btn" type="submit" aria-label="Confirm delete {{ idea.title }}">Confirm delete</button>
+                </form>
+              </div>
+            </details>
+          </div>
+          {% endif %}
+        </article>
+        {% endfor %}
+      </div>
+      {% else %}
+        {% if has_active_filters %}
+        <p class="empty-state">No ideas match the active filters. <a href="{{ url_for('trip_detail', trip_id=trip.id) }}#ideas">Clear filters</a> to view all ideas.</p>
+        {% else %}
+        <p class="empty-state">No ideas yet. <a class="empty-capture-link" href="{{ url_for('trip_detail', trip_id=trip.id, tab='capture') }}" data-desktop-focus-capture>Capture your first spot, meal, or stay</a>.</p>
+        {% endif %}
+      {% endif %}
+    </section>
+  </div>
+  {% elif active_tab == 'capture' %}
+  <div class="trip-focused-pane">
+    {{ quick_capture_section('capture') }}
+  </div>
+  {% elif active_tab == 'settings' %}
+  <div class="trip-focused-pane trip-settings-stack">
+    <section class="card" aria-labelledby="edit-trip-heading">
+      <h2 id="edit-trip-heading">Edit trip</h2>
+      <form method="post" action="{{ url_for('edit_trip', trip_id=trip.id) }}" class="trip-form" data-trip-date-form>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="field field-destination">
+          <label for="edit-destination">Destination</label>
+          <input id="edit-destination" name="destination" maxlength="120" value="{{ edit_form.destination }}" required>
+        </div>
+        <div class="field">
+          <label for="edit-start-date">Start date</label>
+          <input id="edit-start-date" type="date" name="start_date" value="{{ edit_form.start_date }}" required>
+        </div>
+        <div class="field">
+          <label for="edit-end-date">End date</label>
+          <input id="edit-end-date" type="date" name="end_date" value="{{ edit_form.end_date }}"{% if end_date_min %} min="{{ end_date_min }}"{% endif %} required>
+        </div>
+        <button type="submit" class="form-submit">Save changes</button>
+      </form>
+    </section>
+
+    <section class="card danger-zone" id="delete-trip" aria-labelledby="delete-trip-heading">
+      <h2 id="delete-trip-heading">Delete trip</h2>
+      {% if confirm_delete %}
+      <p class="confirm-prompt">Are you sure you want to permanently delete <strong>{{ trip.destination }}</strong> ({{ trip.start_date }} &ndash; {{ trip.end_date }})? This action cannot be undone.</p>
+      <div class="trip-actions">
+        <form method="post" action="{{ url_for('delete_trip', trip_id=trip.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="confirm" value="1">
+          <button class="danger" type="submit">Confirm delete</button>
+        </form>
+        <a class="button-link secondary" href="{{ url_for('trip_detail', trip_id=trip.id, tab='settings') }}">Cancel</a>
+      </div>
+      {% else %}
+      <p>Remove this trip from your planner. You will be asked to confirm before anything is deleted.</p>
+      <div class="trip-actions">
+        <a class="button-link secondary danger-outline" href="{{ url_for('trip_detail', trip_id=trip.id, tab='settings', confirm_delete=1) }}#delete-trip">Delete trip</a>
+      </div>
+      {% endif %}
+    </section>
+  </div>
+  {% endif %}
+{% endblock %}

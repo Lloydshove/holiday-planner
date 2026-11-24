@@ -15,12 +15,13 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8,<10"]
+deploy = ["gunicorn>=23,<24"]
 
 [tool.setuptools.packages.find]
 include = ["holiday_planner*"]
 
 [tool.setuptools.package-data]
-holiday_planner = ["templates/*.html", "static/*.css"]
+holiday_planner = ["templates/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
